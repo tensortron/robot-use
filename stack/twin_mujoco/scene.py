@@ -116,14 +116,23 @@ def load_jaw_hulls(path=None) -> dict | None:
 
 
 def _add_cup(body, o: SceneObject) -> None:
-    """An open cup about the body's origin (the centre of its bounding box): a disc base and CUP_SEGMENTS wall
-    boxes on a ring, overlapping slightly so nothing slips between them. The mass is spread over the pieces."""
+    """An open cup about the body's origin (the centre of its bounding box): a base and CUP_SEGMENTS wall boxes on a
+    ring, overlapping slightly so nothing slips between them. The mass is spread over the pieces.
+    The base is a disc with three square plates in it, turned 0/30/60 deg, their corners on the cup's radius.
+    A block landing on its edge sank through the 4 mm disc alone and stood on the table with the cup lifted round it
+    (2026-10-15); the plates take its weight with MuJoCo's box-on-box contact. Few pieces on purpose: a base of 24
+    radial strips made ~200 contacts and a 3 ms physics step, too slow for the sim's real-time 2 ms step."""
     import mujoco
 
     r, h, t = o.size[0] / 2, o.size[2], o.wall_m
-    n = CUP_SEGMENTS
-    kw = dict(mass=o.mass / (n + 1), rgba=list(o.rgba), friction=[o.friction, 0.01, 0.0001], condim=4)
-    body.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=[r, t / 2, 0], pos=[0, 0, -h / 2 + t / 2], **kw)
+    n, plates = CUP_SEGMENTS, 3
+    kw = dict(mass=o.mass / (n + 1 + plates), rgba=list(o.rgba), friction=[o.friction, 0.01, 0.0001], condim=4)
+    z = -h / 2 + t / 2
+    body.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=[r, t / 2, 0], pos=[0, 0, z], **kw)
+    a = r / math.sqrt(2)                            # half-side: the square's corners on the cup's radius
+    for k in range(plates):
+        body.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[a, a, t / 2], pos=[0, 0, z],
+                      quat=_yaw_quat(90.0 * k / plates), **kw)
     rc = r - t / 2                                  # the wall's mid-line radius
     half_len = r * math.tan(math.pi / n)            # tangential half-length: closes the ring at the outer face
     for k in range(n):

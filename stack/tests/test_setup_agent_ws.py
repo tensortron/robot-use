@@ -191,3 +191,94 @@ def test_the_launchers_refuse_when_the_permissions_cannot_be_checked(tmp_path, m
     (tmp_path / "settings.json").unlink()                                   # not written yet: warn, start
     assert launch_common.agent_settings_current()
     assert "not written yet" in capsys.readouterr().err
+
+
+def _starter(src: Path, name: str, extra: dict | None = None):
+    d = src / name
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: \"[draft] x\"\nstatus: draft\n---\n")
+    (d / "skill.py").write_text("print('hi')\n")
+    for k, v in (extra or {}).items():
+        (d / k).write_text(v)
+
+
+def test_starter_skills_are_copied_when_absent_and_never_over_the_agents_own(tmp_path):
+    src, dest = tmp_path / "skills", tmp_path / "agent" / "skills"
+    _starter(src, "pick", {"history.jsonl": '{"notes": "the reference rig\'s own trail"}\n'})
+    _starter(src, "push")
+    (src / "README.md").write_text("not a skill")
+    (src / "half").mkdir()                                       # no SKILL.md: not a skill
+    own = dest / "push"
+    own.mkdir(parents=True)
+    (own / "SKILL.md").write_text("the agent's own")
+    copied, kept = setup_agent_ws.install_starter_skills(src, dest, today="2026-10-15")
+    assert copied == ["pick"] and kept == ["push"]
+    assert (own / "SKILL.md").read_text() == "the agent's own" and not (own / "skill.py").exists()
+    assert (dest / "pick" / "skill.py").read_text() == "print('hi')\n"
+    lines = (dest / "pick" / "history.jsonl").read_text().splitlines()
+    assert len(lines) == 1                                       # a fresh history: the source's trail stays behind
+    h = json.loads(lines[0])
+    assert h["date"] == "2026-10-15" and h["event"] == "changed" and "reference rig" in h["notes"]
+    assert "not on this robot" in h["notes"] and "skills/pick" in h["notes"]
+    assert sorted(p.name for p in dest.iterdir()) == ["pick", "push"]      # no staging folder left behind
+    (dest / "pick" / "skill.py").write_text("the agent's revision\n")      # once copied, it is the agent's
+    assert setup_agent_ws.install_starter_skills(src, dest) == ([], ["pick", "push"])
+    assert (dest / "pick" / "skill.py").read_text() == "the agent's revision\n"
+
+
+def test_a_starter_skill_is_kept_out_by_a_file_or_link_of_its_name_and_a_dry_run_writes_nothing(tmp_path):
+    src, dest = tmp_path / "skills", tmp_path / "agent" / "skills"
+    _starter(src, "pick")
+    _starter(src, "push")
+    dest.mkdir(parents=True)
+    (dest / "pick").symlink_to(tmp_path / "nowhere")            # a dangling link still holds the name
+    assert setup_agent_ws.install_starter_skills(src, dest, dry_run=True) == (["push"], ["pick"])
+    assert not (dest / "push").exists()
+    (dest / ".push.starter-tmp").mkdir()                        # left by an interrupted run: replaced, not kept
+    (dest / ".push.starter-tmp" / "junk").write_text("x")
+    assert setup_agent_ws.install_starter_skills(src, dest) == (["push"], ["pick"])
+    assert not (dest / "push" / "junk").exists() and not (dest / ".push.starter-tmp").exists()
+
+
+def test_the_shipped_starter_skills_arrive_as_drafts():
+    skills = setup_agent_ws.starter_skills()
+    assert [d.name for d in skills] == ["pick-and-place"]
+    for d in skills:
+        text = (d / "SKILL.md").read_text()
+        front = text.split("---")[1]
+        assert f"name: {d.name}" in front and "status: draft" in front and 'description: "[draft]' in front
+        assert "**Source:**" in text and not (d / "history.jsonl").exists()
+        compile((d / "skill.py").read_text(), str(d / "skill.py"), "exec")
+
+
+def test_setup_copies_the_starter_skills_unless_told_not_to(tmp_path, monkeypatch, capsys):
+    src, dest = tmp_path / "skills", tmp_path / "agent" / "skills"
+    _starter(src, "pick")
+    monkeypatch.setattr(setup_agent_ws, "STARTER_SKILLS", src)
+    monkeypatch.setattr(setup_agent_ws, "AGENT_SKILLS", dest)
+    monkeypatch.setattr(setup_agent_ws, "REPO", tmp_path)
+    for name in ("CLAUDE_OUT", "PI_OUT"):
+        monkeypatch.setattr(setup_agent_ws, name, tmp_path / f"{name}.json")
+    monkeypatch.setattr(setup_agent_ws, "render_claude", lambda repo, home, skipped=None: {"permissions": {"deny": []}})
+    monkeypatch.setattr(setup_agent_ws, "render_pi", lambda repo: "{}")
+    install = setup_agent_ws.install_starter_skills
+    monkeypatch.setattr(setup_agent_ws, "install_starter_skills",
+                        lambda dry_run=False: install(src, dest, dry_run=dry_run))
+    for argv, copied in ((["--no-starter-skills"], False), (["--check"], False), ([], True)):
+        monkeypatch.setattr(sys, "argv", ["setup_agent_ws.py", *argv])
+        assert setup_agent_ws.main() == 0, argv        # --check: the settings are current; a missing skill is no error
+        assert (dest / "pick").exists() == copied, argv
+    out = capsys.readouterr().out
+    assert "starter skill pick: not copied yet (--check)" in out and "starter skill pick: copied" in out
+    _starter(src, "linked")
+    (src / "linked" / "notes.md").symlink_to(tmp_path / "secret")
+    monkeypatch.setattr(sys, "argv", ["setup_agent_ws.py"])
+    assert setup_agent_ws.main() == 2 and not (dest / "linked").exists()     # a link in a starter skill is refused
+    assert "symbolic links" in capsys.readouterr().err
+    (dest / "linked").mkdir()                       # the agent has its own: the starter's link is never looked at
+    assert setup_agent_ws.main() == 0
+
+
+def test_the_agent_is_denied_the_starter_skills_folder(tmp_path):
+    deny = setup_agent_ws.render_claude(REPO, Path.home().resolve())["permissions"]["deny"]
+    assert f"Read(/{REPO}/skills/**)" in deny and f"Edit(/{REPO}/skills/**)" in deny

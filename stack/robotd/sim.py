@@ -66,24 +66,26 @@ class SimRig:
         self.world.stop()
 
 
-def build_sim(cfg, scene: str = DEFAULT_SCENE, seed: int | None = None) -> SimRig:
-    """The simulated rig for robotd's config `cfg`: its arms (cfg.arms) at rest, the scene's objects drawn from
-    `seed`, and its cameras (cfg.cameras; a wrist camera only for a configured arm). Call choose_gl() first."""
+def build_sim(cfg, scene: str = DEFAULT_SCENE, seed: int | None = None, random: bool = False) -> SimRig:
+    """The simulated rig for robotd's config `cfg`: its arms (cfg.arms) at rest, the scene's objects (its start
+    layout, or drawn from `seed` / at random: scene_file.load_scene_file), and its cameras (cfg.cameras; a wrist camera only for a configured arm). Call choose_gl() first."""
     from stack.rig.kinematics import ArmKinematics
     from stack.twin_mujoco.render import SimCameraIO, SimRenderer, sim_cameras
-    from stack.twin_mujoco.scene import build_scene
+    from stack.twin_mujoco.scene import build_scene, load_jaw_hulls
     from stack.twin_mujoco.scene_file import load_scene_file
     from stack.twin_mujoco.sim import SimArmIO, SimWorld
 
     from .safety import ArmModel, rest_pose
 
     rig = cfg.rig
-    layout = load_scene_file(scene, seed, board_front_x=rig.board.front_x_m)
+    layout = load_scene_file(scene, seed, board_front_x=rig.board.front_x_m, random=random)
     sizes = {n: (c.width, c.height) for n, c in cfg.cameras.items()}
     cams = sim_cameras(rig, sizes, arms=tuple(cfg.arms))
     if dropped := sorted(set(sizes) - {c.name for c in cams}):
         log.info("sim: no %s (its arm is not configured)", ", ".join(dropped))
-    scene_obj = build_scene(rig, layout.objects, cameras=cams)
+    # each jaw collides as its convex pieces, as in robotd's safety model: as one hull per jaw (the mesh's convex
+    # hull fills the jaw's mouth) a 4 cm block tilted at grasp height and fell out in the carry (2026-10-15)
+    scene_obj = build_scene(rig, layout.objects, jaw_hulls=load_jaw_hulls(), cameras=cams)
     # every arm in the scene starts folded at rest, configured or not (an unconfigured one just stays there)
     limits_all = nominal_limits(scene_obj.arms)
     start = {a: rest_pose(ArmModel(a, ArmKinematics(rig.arm_mount(a)), limits_all[a]), cfg.safety)

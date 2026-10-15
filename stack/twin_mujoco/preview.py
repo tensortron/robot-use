@@ -23,7 +23,7 @@ from stack.robotd.http import serve
 from stack.robotd.safety import load_arm_limits, rest_pose
 from stack.runner.runner import END_STATES, Budgets, ProgramRunner
 
-from .scene import build_scene
+from .scene import build_scene, load_jaw_hulls
 from .sim import SimArmIO, SimWorld
 
 
@@ -67,7 +67,7 @@ def preview_program(code: str, scene=None, timeout_s: float = 240.0, limits=None
         from stack.robotd.safety import ArmModel
         from stack.rig.kinematics import ArmKinematics
         start = {a: rest_pose(ArmModel(a, ArmKinematics(rig.arm_mount(a)), limits[a]), cfg.safety) for a in limits}
-        world = SimWorld(build_scene(rig, objects), start=start)
+        world = SimWorld(build_scene(rig, objects, jaw_hulls=load_jaw_hulls()), start=start)   # as the sim's jaws
         world.start()
         initial = {o["name"]: world.object_pose(o["name"]) for o in objects}
         rd = RobotD(cfg, {a: SimArmIO(world, a) for a in names}, {}, limits=limits,

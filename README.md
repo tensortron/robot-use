@@ -78,12 +78,17 @@ cd robot-use
 uv sync --extra dev
 ```
 
-**2. Fetch the SO-101 model and write the agent's permissions for this machine.**
+**2. Fetch the SO-101 model, and set up the agent's workspace for this machine.**
 
 ```bash
 uv run python tools/fetch_so101_assets.py      # the MuJoCo model, into ~/.cache/robot-use/so101_mujoco
-uv run python tools/setup_agent_ws.py          # agent_ws/.agents/settings.json: what the agent may read and run
+uv run python tools/setup_agent_ws.py          # agent_ws/.agents/settings.json: what the agent may read and run,
+                                               # and the starter skills (skills/) into agent_ws/.agents/skills/
 ```
+
+The agent starts with one **starter skill**, `pick-and-place` (a block into a cup), as a draft: it was validated on a
+reference rig, and your agent validates it on yours. `--no-starter-skills` leaves it out, if you want to watch an agent
+work the task out from nothing.
 
 **3. Check the machine.** This prints anything that is missing, and the fix for it.
 
@@ -94,8 +99,11 @@ uv run python tools/doctor.py
 **4. Start the simulated rig.** This starts robotd and the MCP server; leave it running.
 
 ```bash
-uv run python tools/run_sim.py                 # a new layout each run; --seed N repeats one
+uv run python tools/run_sim.py                 # the start layout: block and cups placed for an easy first task
 ```
+
+It starts the same way every time, with the blue block and the pink cup in front of the right arm. Once the first task
+works, `--random` puts the objects somewhere new on each start (it prints the seed), and `--seed N` repeats a layout.
 
 Programs run directly on the simulated arms. Add `--enable-preview` to run each one in a MuJoCo twin first (the agent
 is told which way it works).
@@ -112,12 +120,13 @@ claude                                         # or: codex
 > put the blue block in the pink cup
 
 The agent looks through the cameras, writes a program, and watches it run. You'll see each motion on the operator
-page. When it is done, it reports what happened and saves what it learned as a draft skill in
-`agent_ws/.agents/skills/`.
+page. It finds the starter skill and uses it, refining its estimates at the skill's checkpoints. When it is done, it
+reports what happened and records the run in the skill's history (`agent_ws/.agents/skills/`).
 
-**6. Make it a skill.** Restart the sim (Ctrl-C, then step 4 again) for a new layout, and give the agent the same task.
-After two clean runs in a row, the agent asks you to approve the skill. From then on, it uses the skill whenever the
-task comes up.
+**6. Make it a skill.** Restart the sim (Ctrl-C, then step 4 with `--random`) for a new layout, and give the agent the
+same task. After two clean runs in a row, the agent asks you to approve the skill. From then on, it uses the skill
+whenever the task comes up. Some random layouts are beyond one arm: the block on one side and the cup on the other,
+or the block far out on the midline. The agent has to find another way there (a hand-over, or a nudge first).
 
 What the stack records (robotd's log, every program with its trace and keyframes) goes to `~/.tensortron/robot-use/`.
 

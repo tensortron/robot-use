@@ -2,8 +2,9 @@
 
     .venv/bin/python -m stack.robotd                      # real rig, stack/robotd.yaml
     .venv/bin/python -m stack.robotd --mock               # no hardware: mock arms and cameras
-    .venv/bin/python -m stack.robotd --sim [--scene block_cup] [--seed N]
-                                                          # no hardware: the simulated rig (physics, rendered cameras)
+    .venv/bin/python -m stack.robotd --sim [--scene block_cup] [--random | --seed N]
+                                                          # no hardware: the simulated rig (physics, rendered cameras);
+                                                          # the scene's start layout unless --random or --seed
 
 Operator page: http://<robot-host>:8772/   API (localhost only): http://127.0.0.1:8770/state
 """
@@ -29,7 +30,9 @@ def parse_args(argv=None):
     ap.add_argument("--sim", action="store_true",
                     help="the simulated rig: MuJoCo arms, a scene's objects, rendered cameras (no hardware; motion on)")
     ap.add_argument("--scene", default=None, help="--sim: a scene name (stack/twin_mujoco/scenes) or a .yaml path")
-    ap.add_argument("--seed", type=int, default=None, help="--sim: the layout's seed (default: drawn and printed)")
+    ap.add_argument("--seed", type=int, default=None, help="--sim: repeat a drawn layout")
+    ap.add_argument("--random", action="store_true",
+                    help="--sim: draw a new layout (its seed is printed); default: the scene's start layout, if it has one")
     ap.add_argument("--no-cameras", action="store_true")
     ap.add_argument("--enable-motion", action="store_true",
                     help="allow motion for this run (robotd.yaml keeps motion_enabled: false in the repository)")
@@ -38,8 +41,10 @@ def parse_args(argv=None):
     if a.sim and (a.mock or a.enable_motion):
         ap.error("--sim runs alone: it is never combined with --mock, and its motion is on by construction "
                  "(--enable-motion is for the real arms)")
-    if not a.sim and (a.scene or a.seed is not None):
-        ap.error("--scene and --seed are for --sim")
+    if not a.sim and (a.scene or a.seed is not None or a.random):
+        ap.error("--scene, --seed and --random are for --sim")
+    if a.random and a.seed is not None:
+        ap.error("--random draws a new layout; --seed N repeats one: give one of them")
     return a
 
 
@@ -55,13 +60,17 @@ def backends(a, cfg):
         cfg.backend = "sim"
         cfg.log_dir = cfg.log_dir / "sim"      # keep the sim's events apart from the rig's
         try:
-            sim = build_sim(cfg, a.scene or DEFAULT_SCENE, a.seed)
+            sim = build_sim(cfg, a.scene or DEFAULT_SCENE, a.seed, random=a.random)
         except (ValueError, OSError) as e:          # a bad scene file, a camera the sim cannot place
             logging.error("cannot build the simulated rig: %s", e)
             return None
         # the console only: the agent must find the objects with the cameras, as on the rig
-        logging.info("sim scene %s, seed %d (repeat it with --seed %d): %s", sim.layout.name, sim.layout.seed,
-                     sim.layout.seed, ", ".join(o.name for o in sim.layout.objects))
+        if sim.layout.seed is None:
+            logging.info("sim scene %s, its start layout (--random draws another): %s", sim.layout.name,
+                         ", ".join(o.name for o in sim.layout.objects))
+        else:
+            logging.info("sim scene %s, seed %d (repeat it with --seed %d): %s", sim.layout.name, sim.layout.seed,
+                         sim.layout.seed, ", ".join(o.name for o in sim.layout.objects))
         return sim.arm_ios, sim.cam_ios, sim.limits, sim
     if a.mock:
         from .sim import nominal_limits

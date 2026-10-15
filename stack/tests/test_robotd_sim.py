@@ -25,7 +25,7 @@ from stack.robotd.config import DEFAULT_CONFIG, load_config  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 
-# a fixed scene: the block square-on where the twin's roll-0 grasp is known to work (test_twin's PICK), cups apart
+# a fixed scene: the block square-on where test_twin's PICK (a side grasp) is known to work, cups apart
 SCENE = {"name": "test_fixed", "objects": [
     {"name": "blue_block", "shape": "box", "size": [0.04, 0.04, 0.04], "rgba": [0.1, 0.35, 0.85, 1], "mass": 0.03,
      "xy": [0.22, -0.17]},
@@ -36,11 +36,11 @@ PICK = textwrap.dedent("""
     from robot_use import arm, estimate, contact, log
     r = arm("right")
     block = estimate("block", [0.22, -0.17], size=(0.04, 0.04, 0.04), tol=0.03, source="test")
-    dx = -0.0236
+    dy = 0.023                                     # the tip is the fixed jaw's inner face: 3 mm off the block's side
     r.open(80)
-    r.move_to([block.xy[0] + dx, block.xy[1], 0.12], pitch=-70, roll=0, speed=0.8)
-    r.move_to([block.xy[0] + dx, block.xy[1], 0.022], pitch=-70, speed=0.3, until=contact())
-    g = r.close(effort=0.4)
+    r.move_to([block.xy[0], block.xy[1] + dy, 0.09], pitch=-70, roll=-90, speed=0.8)    # jaws square to its sides
+    r.move_to([block.xy[0], block.xy[1] + dy, 0.015], pitch=-70, roll=-90, linear=True, speed=0.3, until=contact())
+    g = r.close(effort=0.5)
     log("grasped " + str(bool(g.grasped)))
     r.move_by(dz=0.06)
 """)
@@ -69,6 +69,9 @@ def test_sim_and_mock_build_no_hardware(monkeypatch, tmp_path):
         assert {type(io) for io in cam_ios.values()} == {SimCameraIO} and set(cam_ios) == set(cfg.cameras)
         assert cfg.motion_enabled and cfg.log_dir == tmp_path / "sim" and set(limits) == set(cfg.arms)
         assert sim.layout.seed == 3
+        m = sim.world.model                                     # each jaw collides as its convex pieces
+        jaw = mujoco_body(m, "right_moving_jaw_so101_v1")
+        assert sum(1 for g in range(m.ngeom) if m.geom_bodyid[g] == jaw and m.geom_contype[g]) > 2
     finally:
         sim.stop()
     arm_ios, cam_ios, limits, sim = robotd_main.backends(robotd_main.parse_args(["--mock"]), load_config())
@@ -120,8 +123,13 @@ def test_one_arm_sim_has_that_arm_and_its_wrist_camera(monkeypatch, tmp_path):
         sim.stop()
 
 
+def mujoco_body(m, name: str) -> int:
+    import mujoco
+    return mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, name)
+
+
 @pytest.mark.parametrize("argv", [["--sim", "--mock"], ["--sim", "--enable-motion"], ["--seed", "1"],
-                                  ["--scene", "block_cup"]])
+                                  ["--scene", "block_cup"], ["--random"], ["--sim", "--random", "--seed", "1"]])
 def test_sim_flags_that_make_no_sense_are_refused(argv):
     with pytest.raises(SystemExit) as e:
         robotd_main.parse_args(argv)

@@ -31,11 +31,11 @@ PICK = textwrap.dedent("""
     from robot_use import arm, estimate, contact, log
     r = arm("right")
     block = estimate("block", [0.22, -0.17], size=(0.04, 0.04, 0.04), tol=0.03, source="test")
-    dx = -0.0236                                   # the grasp offset in robot.yaml: tip behind the centre
+    dy = 0.023                                     # the tip is the fixed jaw's inner face: 3 mm off the block's side
     r.open(80)
-    r.move_to([block.xy[0] + dx, block.xy[1], 0.12], pitch=-70, roll=0, speed=0.8)   # the twin's roll-0 grasp
-    r.move_to([block.xy[0] + dx, block.xy[1], 0.022], pitch=-70, speed=0.3, until=contact())
-    g = r.close(effort=0.4)
+    r.move_to([block.xy[0], block.xy[1] + dy, 0.09], pitch=-70, roll=-90, speed=0.8)    # jaws square to its sides
+    r.move_to([block.xy[0], block.xy[1] + dy, 0.015], pitch=-70, roll=-90, linear=True, speed=0.3, until=contact())
+    g = r.close(effort=0.5)
     log("grasped " + str(bool(g.grasped)))
     r.move_by(dz=0.06)
 """)
@@ -88,8 +88,18 @@ def test_preview_picks_a_block_for_real(tmp_path):
     assert "grasped True" in logs
 
 
+def test_a_held_block_stays_in_the_jaws_through_a_carry(tmp_path):
+    # the jaws collide as their convex pieces (stack/assets/gripper_collision), as in robotd's safety model; as one
+    # convex hull each, the block tilted at grasp height and fell out in the carry (2026-10-15)
+    carry = PICK + "r.move_to([0.27, -0.05, 0.09], pitch=-65, roll=-90, speed=0.2)\n"
+    rep = preview_program(carry, BLOCK, limits=LIMITS, work_dir=tmp_path)
+    assert rep["ok"] and rep["status"] == "done", rep
+    b = rep["objects"]["block"]
+    assert b["final"][2] - b["initial"][2] > 0.04 and np.hypot(*np.subtract(b["final"][:2], b["initial"][:2])) > 0.1, b
+
+
 def test_preview_reports_what_failed(tmp_path):
-    bad = PICK.replace("pitch=-70, roll=0, speed=0.8", "pitch=-90, roll=0, speed=0.8")    # straight down is out of reach here
+    bad = PICK.replace("[block.xy[0], block.xy[1] + dy, 0.09]", "[block.xy[0] + 0.3, block.xy[1] + dy, 0.09]")   # beyond reach
     rep = preview_program(bad, BLOCK, limits=LIMITS, work_dir=tmp_path)
     assert not rep["ok"] and rep["step_failures"], rep
     assert "unreachable" in rep["step_failures"][0]["reason"]
@@ -101,7 +111,7 @@ def test_runner_rejects_a_program_whose_preview_fails(tmp_path):
     from stack.twin_mujoco.preview import preview_program as pp
     r = ProgramRunner("http://127.0.0.1:9", tmp_path / "ep",
                       preview=lambda code, scene=None: pp(code, scene, limits=LIMITS, work_dir=tmp_path / "twin"))
-    out = r.submit(PICK.replace("pitch=-70, roll=0, speed=0.8", "pitch=-90, roll=0, speed=0.8"), scene=BLOCK)
+    out = r.submit(PICK.replace("[block.xy[0], block.xy[1] + dy, 0.09]", "[block.xy[0] + 0.3, block.xy[1] + dy, 0.09]"), scene=BLOCK)
     st = r.status(out["program_id"], wait_s=30)
     assert st["status"] == "rejected" and "preview" in st["reason"], st
     assert st["preview"]["step_failures"]
@@ -126,7 +136,7 @@ def test_a_scene_file_draws_the_same_layout_from_the_same_seed():
     a, b, c = (load_scene_file("block_cup", s) for s in (7, 7, 8))
     assert a.seed == 7 and [o.xyz for o in a.objects] == [o.xyz for o in b.objects]
     assert [o.xyz for o in a.objects] != [o.xyz for o in c.objects]
-    drawn = load_scene_file("block_cup")                            # no seed: one is drawn and reported,
+    drawn = load_scene_file("block_cup", random=True)               # random: a seed is drawn and reported,
     again = load_scene_file("block_cup", drawn.seed)                # so the run can be repeated
     assert [o.xyz for o in drawn.objects] == [o.xyz for o in again.objects]
     for seed in range(50):
@@ -138,6 +148,35 @@ def test_a_scene_file_draws_the_same_layout_from_the_same_seed():
             for p in objs[i + 1:]:                                              # min_gap_m apart (0.03)
                 gap = np.hypot(o.xyz[0] - p.xyz[0], o.xyz[1] - p.xyz[1]) - footprint_radius(o) - footprint_radius(p)
                 assert gap >= 0.03, (seed, o.name, p.name, gap)
+
+
+def test_a_scene_file_starts_from_its_start_layout_unless_asked_for_another(tmp_path):
+    rig = load_rig()
+    a, b = load_scene_file("block_cup"), load_scene_file("block_cup")      # the canned first task: every run alike
+    assert a.seed is None and [(o.xyz, o.yaw_deg) for o in a.objects] == [(o.xyz, o.yaw_deg) for o in b.objects]
+    pose = {o.name: (o.xyz[:2], o.yaw_deg) for o in a.objects}
+    assert pose["blue_block"] == ((0.22, -0.15), 10.0) and pose["pink_cup"][0] == (0.27, -0.03)
+    for i, o in enumerate(a.objects):                                      # the same rules as a drawn layout
+        assert o.xyz[0] - footprint_radius(o) >= rig.board.front_x_m and o.xyz[2] == pytest.approx(o.size[2] / 2)
+        for p in a.objects[i + 1:]:
+            assert np.hypot(o.xyz[0] - p.xyz[0], o.xyz[1] - p.xyz[1]) - footprint_radius(o) - footprint_radius(p) >= 0.03
+    r = load_scene_file("block_cup", random=True)                         # --random: drawn, with its seed
+    assert r.seed is not None and [o.xyz for o in r.objects] == [o.xyz for o in load_scene_file("block_cup", r.seed).objects]
+    assert [o.xyz for o in load_scene_file("block_cup", 7).objects] != [o.xyz for o in a.objects]
+    f = tmp_path / "s.yaml"
+    obj = "{{name: {n}, size: [0.04, 0.04, 0.04], x: [0.2, 0.3], y: [-0.2, 0.2]{st}}}"
+    f.write_text("objects:\n  - " + obj.format(n="a", st="") + "\n")
+    assert load_scene_file(f).seed is not None                             # no start layout: one is drawn
+    for st, other, match in [(", start: {xy: [0.25, 0.0]}", "", "on every object"),
+                             (", start: {xy: [0.25, 0.0]}", ", start: {xy: [0.26, 0.01]}", "within min_gap_m"),
+                             (", start: {xy: [0.0, 0.0]}", ", start: {xy: [0.25, 0.1]}", "on the board"),
+                             (", start: {xy: [0.25, 0.0], z: 1}", ", start: {xy: [0.25, 0.1]}", "start is"),
+                             (", start: {xy: [0.25]}", ", start: {xy: [0.25, 0.1]}", "start xy")]:
+        f.write_text("objects:\n  - " + obj.format(n="a", st=st) + "\n  - " + obj.format(n="b", st=other) + "\n")
+        with pytest.raises(ValueError, match=match):
+            load_scene_file(f)
+    f.write_text("objects:\n  - " + obj.format(n="a", st=", start: {xy: [0.0, 0.0]}") + "\n")
+    assert load_scene_file(f, 3).seed == 3                                 # a drawn layout ignores the start poses
 
 
 def test_a_scene_file_refuses_what_it_cannot_honour(tmp_path):
@@ -187,6 +226,24 @@ def test_the_scene_objects_rest_on_the_table_clear_of_the_arms_at_rest():
                 assert not any(n.startswith(("left_", "right_")) for n in names), (seed, names)
 
 
+def test_a_cups_pieces_stay_inside_its_footprint():
+    from stack.twin_mujoco.scene_file import footprint_radius as fr
+    from stack.twin_mujoco.scene import SceneObject
+    cup = SceneObject.from_dict({"name": "cup", "shape": "cup", "size": [0.085, 0.085, 0.05], "xy": [0.25, 0.0]})
+    sc = build_scene(load_rig(), [cup])
+    m, d = sc.model, mujoco.MjData(sc.model)
+    mujoco.mj_forward(m, d)
+    body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "obj_cup")
+    for g in (g for g in range(m.ngeom) if m.geom_bodyid[g] == body):
+        if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_CYLINDER:                  # the disc: its radius
+            assert np.hypot(d.geom_xpos[g][0] - 0.25, d.geom_xpos[g][1]) + m.geom_size[g][0] <= fr(cup) + 1e-6
+            continue
+        R, half = d.geom_xmat[g].reshape(3, 3), m.geom_size[g]
+        for corner in np.array(np.meshgrid([-1, 1], [-1, 1], [-1, 1])).T.reshape(-1, 3):
+            p = d.geom_xpos[g] + R @ (corner * half)
+            assert np.hypot(p[0] - 0.25, p[1]) <= fr(cup) + 1e-6, (g, p)
+
+
 def test_a_block_dropped_into_a_cup_stays_in_it():
     rig = load_rig()
     cup = {"name": "cup", "shape": "cup", "size": [0.085, 0.085, 0.05], "xy": [0.25, 0.0], "wall_m": 0.004}
@@ -202,6 +259,14 @@ def test_a_block_dropped_into_a_cup_stays_in_it():
     b, c = np.array(w.object_pose("block")), np.array(w.object_pose("cup"))
     assert np.hypot(*(b - c)[:2]) < inner_r and 0.004 < b[2] < 0.05, (b, c)
     assert np.linalg.norm(c - [0.25, 0.0, 0.025]) < 0.005, c
+    # near the wall, on an edge: it rests on the base, never through it, and the cup stays down (2026-10-15: a
+    # 4 mm cylinder base let such a block through, and the cup rose round it)
+    for dy, yaw in ((0.015, 45), (-0.016, 30), (0.0, 45)):
+        block = {"name": "block", "size": [0.04, 0.04, 0.04], "xyz": [0.25, dy, 0.08], "yaw_deg": yaw}
+        w = _settle(build_scene(rig, [cup, block]), seconds=2.0)
+        b, c = np.array(w.object_pose("block")), np.array(w.object_pose("cup"))
+        assert b[2] > 0.004 + 0.015 and np.hypot(*(b - c)[:2]) < inner_r, (dy, yaw, b, c)
+        assert np.linalg.norm(c - [0.25, 0.0, 0.025]) < 0.005, (dy, yaw, c)
     # beside the cup: it lands on the table, not through the wall
     block = {"name": "block", "size": [0.04, 0.04, 0.04], "xyz": [0.25, 0.07, 0.09]}
     w = _settle(build_scene(rig, [cup, block]), seconds=2.0)

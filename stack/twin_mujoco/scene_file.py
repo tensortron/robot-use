@@ -6,6 +6,10 @@ one either a fixed `xy` or a range (`x: [lo, hi]`, `y: [lo, hi]`) in the rig fra
 the table (z = 0), off the board, with at least `min_gap_m` between their footprints (circles round each object).
 A layout that cannot be drawn in `MAX_TRIES` is an error, not a silently crowded scene. Placement is greedy, in file
 order (no backtracking), and keeps clear of robot.yaml's board, so a layout depends on both.
+
+A file may also give every object a fixed `start: {xy: [x, y], yaw_deg: d}`: the **start layout**, used when no
+seed is given and a random layout is not asked for. It is the canned first task (an easy layout known to work); it
+obeys the same rules (off the board, `min_gap_m` apart), checked when it is loaded.
 """
 
 from __future__ import annotations
@@ -20,14 +24,15 @@ import yaml
 from .scene import CUP_SEGMENTS, SCENES_DIR, SceneObject
 
 MAX_TRIES = 2000
-OBJECT_KEYS = {"name", "shape", "size", "xy", "x", "y", "yaw_deg", "mass", "rgba", "friction", "wall_m"}
+OBJECT_KEYS = {"name", "shape", "size", "xy", "x", "y", "yaw_deg", "mass", "rgba", "friction", "wall_m", "start"}
+START_KEYS = {"xy", "yaw_deg"}
 FILE_KEYS = {"name", "description", "min_gap_m", "objects"}
 
 
 @dataclass
 class Layout:
     name: str
-    seed: int
+    seed: int | None                         # None: the file's start layout
     objects: list                            # [SceneObject], placed
 
 
@@ -64,9 +69,11 @@ def _range(spec, what: str) -> tuple[float, float]:
     return lo, hi
 
 
-def load_scene_file(name_or_path, seed: int | None = None, board_front_x: float | None = None) -> Layout:
-    """Draw a layout. `seed` None picks one (reported in Layout.seed, so a run can be repeated). Objects keep clear
-    of the board's front edge (`board_front_x`, default from robot.yaml)."""
+def load_scene_file(name_or_path, seed: int | None = None, board_front_x: float | None = None,
+                    random: bool = False) -> Layout:
+    """The file's start layout when it has one, `seed` is None and `random` is false (Layout.seed None). Otherwise
+    draw a layout: `seed` None picks one (reported in Layout.seed, so a run can be repeated). Objects keep clear of
+    the board's front edge (`board_front_x`, default from robot.yaml)."""
     path = scene_path(name_or_path)
     raw = yaml.safe_load(path.read_text()) or {}
     if not isinstance(raw, dict) or not isinstance(raw.get("objects", []), list):
@@ -76,6 +83,11 @@ def load_scene_file(name_or_path, seed: int | None = None, board_front_x: float 
     if board_front_x is None:
         from stack.rig.rig import load_rig
         board_front_x = load_rig().board.front_x_m
+    objs = raw.get("objects") or []
+    starts = [isinstance(d, dict) and "start" in d for d in objs]
+    if any(starts) and not all(starts):
+        raise ValueError(f"{path.name}: a start layout needs `start` on every object, or on none")
+    use_start = all(starts) and bool(objs) and seed is None and not random
     if seed is None:
         seed = int(np.random.SeedSequence().entropy % 2**31)
     rng = np.random.default_rng(seed)
@@ -101,9 +113,25 @@ def load_scene_file(name_or_path, seed: int | None = None, board_front_x: float 
         else:
             xr, yr = _range(d["x"], f"{name} x"), _range(d["y"], f"{name} y")
         yawr = _range(d.get("yaw_deg", 0.0), f"{name} yaw_deg")
-        proto = SceneObject.from_dict({**{k: v for k, v in d.items() if k not in ("x", "y", "xy", "yaw_deg")},
+        proto = SceneObject.from_dict({**{k: v for k, v in d.items() if k not in ("x", "y", "xy", "yaw_deg", "start")},
                                        "xy": [0, 0]})
         r = footprint_radius(proto)
+        if "start" in d:
+            st = d["start"]
+            if not isinstance(st, dict) or not set(st) <= START_KEYS or "xy" not in st:
+                raise ValueError(f"{path.name}: object {name!r}: start is {{xy: [x, y], yaw_deg: d}}, got {st!r}")
+            if not isinstance(st["xy"], (list, tuple)) or len(st["xy"]) != 2:
+                raise ValueError(f"{path.name}: object {name!r}: start xy is [x, y], got {st['xy']!r}")
+            sx, sy = (_num(v, f"{name} start xy") for v in st["xy"])
+            syaw = _num(st.get("yaw_deg", 0.0), f"{name} start yaw_deg")
+            if use_start:
+                if sx - r < board_front_x + gap or any(
+                        math.hypot(sx - o.xyz[0], sy - o.xyz[1]) < r + footprint_radius(o) + gap for o in placed):
+                    raise ValueError(f"{path.name}: object {name!r}: its start pose is on the board or within "
+                                     f"min_gap_m of another object")
+                placed.append(SceneObject(name, proto.size, (sx, sy, proto.size[2] / 2), syaw, proto.mass,
+                                          proto.rgba, proto.friction, proto.shape, proto.wall_m))
+                continue
         for _ in range(MAX_TRIES):
             x, y = rng.uniform(*xr), rng.uniform(*yr)
             if x - r < board_front_x + gap:
@@ -116,4 +144,4 @@ def load_scene_file(name_or_path, seed: int | None = None, board_front_x: float 
         yaw = rng.uniform(*yawr)
         placed.append(SceneObject(name, proto.size, (float(x), float(y), proto.size[2] / 2), float(yaw), proto.mass,
                                   proto.rgba, proto.friction, proto.shape, proto.wall_m))
-    return Layout(str(raw.get("name", path.stem)), seed, placed)
+    return Layout(str(raw.get("name", path.stem)), None if use_start else seed, placed)

@@ -171,6 +171,12 @@ def test_a_killed_launcher_takes_the_sim_with_it(tmp_path):
         _cleanup(p, tmp_path, kids)
 
 
+def test_run_sim_takes_random_or_a_seed_not_both(tmp_path):
+    p = subprocess.run([sys.executable, "tools/run_sim.py", "--random", "--seed", "1", "--home", str(tmp_path / "home")],
+                       cwd=REPO, capture_output=True, text=True, timeout=60)
+    assert p.returncode == 2 and "--random draws a new layout" in p.stderr
+
+
 def test_run_sim_refuses_ports_in_use(tmp_path):
     base = _free_base()
     with socket.socket() as s:

@@ -105,9 +105,12 @@ macOS; [AGENT_SANDBOX.md](AGENT_SANDBOX.md)).
 
 `python tools/run_sim.py` starts robotd with `--sim` and the MCP server together. robotd is unchanged; only its arms
 and cameras differ: MuJoCo arms stepping in real time (`SimArmIO`), a scene file's objects
-(`stack/twin_mujoco/scenes/`, placed from a seed), and cameras rendered from `robot.yaml`'s camera models, so
+(`stack/twin_mujoco/scenes/`: the scene's start layout, an easy first task, unless `--random` or `--seed N` draws
+one), and cameras rendered from `robot.yaml`'s camera models, so
 `pixel_to_table` holds on them. It opens no device. The objects' true positions never reach the API: the agent finds
-them with the cameras, as on the rig. `tools/doctor.py` says what a machine is missing.
+them with the cameras, as on the rig. Each jaw collides as its convex pieces (`stack/assets/gripper_collision`),
+as in robotd's safety model, so a held block stays held; a cup is a disc base with three box plates in it and a ring of wall boxes.
+`tools/doctor.py` says what a machine is missing.
 
 ## Where things are recorded
 
@@ -138,7 +141,8 @@ report.
 | **agent surface** | MCP `--surface`, `--tools` | `agent` / `debug`; `all`, `joint`, `cartesian` | `agent`, `all` | `agent`, `all` | `agent`: programs only; `debug`: direct motion tools, for people |
 | **budgets** | the runner (`Budgets`) | steps, queries, seconds | 50 steps, 100 queries, 180 s of motion, 900 s wall clock, 2 failures in a row | the same | a program exceeding one is stopped |
 | **backend** | robotd `--mock` / `--sim` / neither | hardware, mock, sim | hardware | hardware | which arms and cameras; also chooses the program sandbox (sim may use files-only Landlock on old kernels) |
-| **scene, seed** | `--scene`, `--seed` (sim; `run_sim.py`) | a scene name or file; an integer | `block_cup`, a new seed each run | - | the sim's objects and their layout |
+| **scene, layout** | `--scene`, `--random`, `--seed` (sim; `run_sim.py`) | a scene name or file; a new layout; an integer | `block_cup` in its **start layout** (the same every run; a scene without one draws a seed) | - | the sim's objects and their layout: `--random` draws one and prints its seed, `--seed N` repeats it |
+| **starter skills** | `tools/setup_agent_ws.py --no-starter-skills` | copy / skip | **copy** | - | setup copies each `skills/<name>/` into `agent_ws/.agents/skills/` as a draft when the agent has no skill of that name; never over its own. The agent's settings deny it `skills/` itself |
 | **data folder** | `ROBOT_USE_HOME`; robotd `log_dir`; MCP `--episodes`; `run_sim --home` | a path | `~/.tensortron/robot-use` | the default | where everything is recorded |
 | **rendering** | `MUJOCO_GL` | `egl`, `cgl`, `osmesa` | probed (`python -m stack.twin_mujoco.render`) | `egl` | the sim's cameras |
 | **ego camera model** | `robot.yaml`, `cameras.ego` | calibrated (its `intrinsics_file`, `extrinsics_file`) or estimated (its own numbers: `eye_m`, `tilt_down_deg`, `yaw_deg`, `roll_deg`, `fov_h_deg` or `distortion`) | calibrated (this rig's `calib/`) | calibrated | the overlay, `pixel_to_table`, the sim's ego camera. A file wins over the numbers beside it; lens and pose are chosen separately. An estimate shows as a warning on the operator page and in `doctor` ([CALIBRATION.md](CALIBRATION.md)) |
@@ -153,7 +157,7 @@ is `robot.yaml`'s.
 | | Command | Starts |
 |---|---|---|
 | the real rig | `tools/run_rig.py [--enable-motion] [--approval none]` | robotd on the arms (after checking the devices are present and free) and the MCP server; Ctrl-C stops both |
-| the simulated rig | `tools/run_sim.py [--seed N]` | robotd `--sim` and the MCP server |
+| the simulated rig | `tools/run_sim.py [--random \| --seed N]` | robotd `--sim` and the MCP server |
 | the launcher, without hardware | `tools/run_rig.py --mock` | robotd with mock arms and the MCP server |
 | calibration | `tools/calibrate.py [--trial [DIR]] [--camera-only]` | a guided page (127.0.0.1:8098) for the arms, the measurements and the ego camera; needs robotd stopped (it opens the arms and the camera itself) and writes lerobot's calibration files, `robot.yaml` and `calib/` ([CALIBRATION.md](CALIBRATION.md)) |
 

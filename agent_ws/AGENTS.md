@@ -75,6 +75,10 @@ task done for the first time is **discovery**, not yet a skill. Keep what you le
 of skills. Update the history every time you use or change a skill. Older history lines may have no `event`.
 If your file tool can only write whole files, read the file in full first and write all of it back, so no line is lost.
 
+**Starter skills.** Some drafts may be here before your first session: skills shipped with the stack, whose history
+starts with a line "Seeded from robot-use's starter skills". They were validated on another robot, not this one. They
+are your drafts now: use them, refine them and validate them here, like any other draft.
+
 ### A clean run
 
 A run of the skill **as written** that:

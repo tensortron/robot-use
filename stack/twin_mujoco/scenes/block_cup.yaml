@@ -2,6 +2,9 @@
 # Sizes and colours follow the objects used on the real rig (2026-10): a 4 cm blue block, a pink cup ~8.5 cm across
 # and a cream cup ~7 cm across. Positions are drawn from the ranges below (rig frame, metres) from a seed:
 # `robotd --sim --seed N` repeats a layout. Objects stand on the table, clear of the board and of each other.
+# `start` is the layout used unless one is asked for (--random, --seed N): the canned first task, block and pink cup
+# both in front of the right arm, the block square to its jaws at roll -90 (yaw 10: well clear of the skill's
+# turned-wrist threshold) - checked with the starter pick-and-place skill (2026-10-15).
 name: block_cup
 description: a blue block and two cups (pink, cream) on the table in front of the arms
 min_gap_m: 0.03                      # between object footprints
@@ -14,19 +17,22 @@ objects:
     x: [0.18, 0.30]
     y: [-0.22, 0.22]
     yaw_deg: [-30, 30]
+    start: {xy: [0.22, -0.15], yaw_deg: 10}
   - name: pink_cup
     shape: cup
     size: [0.085, 0.085, 0.05]       # outer diameter, diameter, height
     wall_m: 0.004
     rgba: [0.95, 0.40, 0.65, 1]
-    mass: 0.04
+    mass: 0.10                       # a sturdy plastic cup (user, 2026-10-15: 40 g was too light)
     x: [0.18, 0.30]
     y: [-0.24, 0.24]
+    start: {xy: [0.27, -0.03]}
   - name: cream_cup
     shape: cup
     size: [0.07, 0.07, 0.055]
     wall_m: 0.004
     rgba: [0.95, 0.92, 0.78, 1]
-    mass: 0.04
+    mass: 0.10
     x: [0.18, 0.30]
     y: [-0.24, 0.24]
+    start: {xy: [0.24, 0.18]}

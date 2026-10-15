@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Write the operating agent's settings for this machine, from the templates in agent_ws.
 
-    python tools/setup_agent_ws.py            # write agent_ws/.agents/settings.json and the pi permissions
-    python tools/setup_agent_ws.py --check    # only say whether they are up to date (exit 1 if not)
+    python tools/setup_agent_ws.py            # write agent_ws/.agents/settings.json and the pi permissions,
+                                              # and copy in the starter skills the agent does not have yet
+    python tools/setup_agent_ws.py --check    # only say whether the settings are up to date (exit 1 if not);
+                                              # names starter skills not copied yet, but copies nothing (exit 0)
+    python tools/setup_agent_ws.py --no-starter-skills    # the settings only
 
 Claude Code's read rules need absolute paths for anything outside agent_ws, so the settings are rendered for where
 this repository and the home folder are, instead of being committed with one machine's paths (sprint 2026-10-13,
@@ -17,12 +20,21 @@ Read deny added for:
 Folders made later are not covered until this is run again. The pi permission system's allowlist
 (`agent_ws/.pi/extensions/pi-permission-system/config.template.json`) is rendered the same way. Codex has no read
 rules (its permissions are looser: see the README).
+
+Starter skills (`skills/<name>/`, sprint 2026-10-15-starter-skill): each is copied into `agent_ws/.agents/skills/`
+when the agent has no skill of that name - never over its own - as a draft, with one history line saying where it
+came from. From then on it is the agent's, under the skill lifecycle in agent_ws/AGENTS.md. A starter skill to be
+copied that holds a symbolic link is refused, before anything is copied (a link could point the agent at a file it
+is denied); a starter skill folder that is itself a link is not a starter skill. The agent's settings deny it the
+`skills/` folder itself: the starter skill states the grasp geometry that some experiments withhold.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -33,11 +45,16 @@ CLAUDE_TEMPLATE = REPO / "agent_ws/.agents/settings.template.json"
 CLAUDE_OUT = REPO / "agent_ws/.agents/settings.json"
 PI_TEMPLATE = REPO / "agent_ws/.pi/extensions/pi-permission-system/config.template.json"
 PI_OUT = REPO / "agent_ws/.pi/extensions/pi-permission-system/config.json"
+STARTER_SKILLS = REPO / "skills"
+AGENT_SKILLS = REPO / "agent_ws/.agents/skills"
+SEEDED_NOTE = ("Seeded from robot-use's starter skills (skills/{name}): validated on a reference rig, not on this "
+               "robot. A draft: use it, refine it and validate it here under the skill lifecycle.")
 
 # Never rendered without these, whatever the template says: the template sits in the agent's own folder, so a
 # weakened template must not become weaker settings (review of sprint 2026-10-13 task 7). {REPO} as in the template.
 REQUIRED_DENY = ("Bash", "Read(/{REPO}/robot.yaml)", "Read(/{REPO}/calib/**)", "Read(/{REPO}/tools/**)",
-                 "Read(/{REPO}/docs/**)", "Read(/{REPO}/stack/twin_mujoco/**)", "Read(/{REPO}/stack/robotd/**)",
+                 "Read(/{REPO}/docs/**)", "Read(/{REPO}/skills/**)", "Edit(/{REPO}/skills/**)",
+                 "Read(/{REPO}/stack/twin_mujoco/**)", "Read(/{REPO}/stack/robotd/**)",
                  "Edit(/{REPO}/stack/**)", "Edit(/{REPO}/lib/**)", "Edit(/{REPO}/tools/**)", "Edit(/{REPO}/robot.yaml)",
                  "Edit(/{REPO}/agent_ws/.agents/settings.json)", "Edit(/{REPO}/agent_ws/.claude/settings.json)",
                  "Edit(/{REPO}/agent_ws/.agents/settings.template.json)",
@@ -48,7 +65,7 @@ ALLOWED_ALLOW = ("mcp__so101",)
 # a dropped deny; pi's yoloMode or an allow) reaches the agent unreviewed, however it was changed. To change a
 # template: edit it, have the change reviewed, then update its hash here (this file is Edit-denied to the agent).
 TEMPLATE_SHA256 = {
-    "agent_ws/.agents/settings.template.json": "441609dd9968aa629e4d097959763bbf058c2074510a96299bc7042aba2b9fe1",
+    "agent_ws/.agents/settings.template.json": "11814e6b4a8deb6ce607dc3a24ee0a77a81f3bd21570c1bca4666e5cfa245e11",
     "agent_ws/.pi/extensions/pi-permission-system/config.template.json":
         "af46456fb8660a81b26073114f16080eccbed4b420e52413f181e2cc76c1dcb5",
 }
@@ -199,9 +216,54 @@ def drift() -> dict | None:
     return {"files": files, "added": sorted(after - before), "removed": sorted(before - after)}
 
 
+def starter_skills(src: Path = STARTER_SKILLS) -> list[Path]:
+    """The starter skill folders: each directory in `src` with a SKILL.md."""
+    if not src.is_dir():
+        return []
+    return sorted(d for d in src.iterdir() if d.is_dir() and not d.is_symlink() and not d.name.startswith((".", "_"))
+                  and (d / "SKILL.md").is_file())
+
+
+def install_starter_skills(src: Path = STARTER_SKILLS, dest: Path = AGENT_SKILLS, dry_run: bool = False,
+                           today: str | None = None) -> tuple[list[str], list[str]]:
+    """Copy each starter skill the agent does not have into `dest`, with a fresh history.jsonl holding one "seeded"
+    line (D5: the source's own history, if any, stays behind). Returns (copied, kept): a skill of that name already
+    there - a folder, a file or a link - is kept as it is (D2). The copy is staged beside it and renamed into place,
+    so an interrupted run leaves no half skill that a later run would mistake for the agent's own."""
+    today = today or datetime.date.today().isoformat()
+    copied, kept = [], []
+    todo = []
+    for d in starter_skills(src):
+        target = dest / d.name
+        if target.exists() or target.is_symlink():
+            kept.append(d.name)
+            continue
+        if links := [p for p in d.rglob("*") if p.is_symlink()]:
+            raise ValueError(f"starter skill {d.name}: symbolic links are not copied ({', '.join(map(str, links))})")
+        todo.append((d, target))
+    for d, target in todo:
+        copied.append(d.name)
+        if dry_run:
+            continue
+        dest.mkdir(parents=True, exist_ok=True)
+        tmp = dest / f".{d.name}.starter-tmp"
+        if tmp.is_dir() and not tmp.is_symlink():          # left by an interrupted run
+            shutil.rmtree(tmp)
+        elif tmp.exists() or tmp.is_symlink():
+            tmp.unlink()
+        shutil.copytree(d, tmp, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "history.jsonl"))
+        line = {"date": today, "episode": None, "program": None, "event": "changed", "outcome": None,
+                "notes": SEEDED_NOTE.format(name=d.name)}
+        (tmp / "history.jsonl").write_text(json.dumps(line) + "\n")
+        tmp.rename(target)
+    return copied, kept
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="only report whether the files are up to date")
+    ap.add_argument("--no-starter-skills", action="store_true",
+                    help="do not copy the starter skills (skills/) into the agent's skills folder")
     a = ap.parse_args()
     home = Path.home().resolve()
     skipped = []
@@ -234,6 +296,17 @@ def main() -> int:
         if not a.check:
             out.write_text(text)
             print(f"wrote {out.relative_to(REPO)}")
+    if not a.no_starter_skills:
+        try:
+            copied, kept = install_starter_skills(dry_run=a.check)
+        except ValueError as e:
+            print(f"refused: {e}", file=sys.stderr)
+            return 2
+        for name in copied:
+            print(f"starter skill {name}: " + ("not copied yet (--check)" if a.check else
+                                                f"copied into {AGENT_SKILLS.relative_to(REPO)}/{name} as a draft"))
+        for name in kept:
+            print(f"starter skill {name}: the agent has its own; left as it is")
     if a.check and stale:
         print("out of date: run python tools/setup_agent_ws.py")
         return 1

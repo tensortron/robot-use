@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Start the simulated rig: robotd --sim and the MCP server, together. Ctrl-C stops both.
 
-    python tools/run_sim.py                     # the block_cup scene, a new layout each run
-    python tools/run_sim.py --seed 7            # repeat a layout (the seed is printed at start)
+    python tools/run_sim.py                     # the block_cup scene in its start layout: an easy first task
+    python tools/run_sim.py --random            # a new layout (its seed is printed at start)
+    python tools/run_sim.py --seed 7            # repeat a drawn layout
     python tools/run_sim.py --scene my.yaml     # another scene file (stack/twin_mujoco/scenes/*.yaml format)
     python tools/run_sim.py --enable-preview    # each program runs in the MuJoCo twin first (off by default)
 
@@ -54,7 +55,9 @@ def sim_config(base: dict, home: Path, port_base: int) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--scene", default=None, help="a scene name (stack/twin_mujoco/scenes) or a .yaml path")
-    ap.add_argument("--seed", type=int, default=None, help="repeat a layout")
+    ap.add_argument("--seed", type=int, default=None, help="repeat a drawn layout")
+    ap.add_argument("--random", action="store_true",
+                    help="draw a new layout (default: the scene's start layout, the same every run)")
     ap.add_argument("--home", default=None,
                     help="where the sim's logs, programs and episodes go (default $ROBOT_USE_HOME/sim, ~/.tensortron/robot-use/sim)")
     ap.add_argument("--port-base", type=int, default=8770, help="robotd API at this port, MCP +1, operator +2")
@@ -64,6 +67,8 @@ def main() -> int:
     a = ap.parse_args()
     if not 1024 <= a.port_base <= 65533:
         ap.error("--port-base must be between 1024 and 65533")
+    if a.random and a.seed is not None:
+        ap.error("--random draws a new layout; --seed N repeats one: give one of them")
 
     import threading
     stopping = threading.Event()
@@ -125,6 +130,8 @@ def main() -> int:
             rd_cmd += ["--scene", a.scene]
         if a.seed is not None:
             rd_cmd += ["--seed", str(a.seed)]
+        if a.random:
+            rd_cmd += ["--random"]
         procs.append(spawn(rd_cmd, rd_log, env, hook))
         (home / PIDS_FILE).write_text(f"{procs[0].pid}\n")
         print("starting robotd --sim ...", flush=True)
