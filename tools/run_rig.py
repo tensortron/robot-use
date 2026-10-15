@@ -5,11 +5,13 @@
     .venv/bin/python tools/run_rig.py --enable-motion                   # attended: a human approves each program
     .venv/bin/python tools/run_rig.py --enable-motion --approval none   # unattended: programs run without approval
     .venv/bin/python tools/run_rig.py --mock                            # mock arms, no hardware (to try the launcher)
+    .venv/bin/python tools/run_rig.py --enable-motion --enable-preview  # each program runs in the MuJoCo twin first
 
 **Only move the real arms with a person at the 12 V supply** (AGENTS.md). Power the arms (12 V) before the USB hub.
 
 robotd's settings are the repository's `stack/robotd.yaml`, the one source, with this session's choices applied:
-the approval mode (`--approval`, default `first_motion`), motion (`--enable-motion`, off unless given), the API and
+the approval mode (`--approval`, default `first_motion`), motion (`--enable-motion`, off unless given), the twin
+preview (`--enable-preview`, off unless given: programs then run directly on the arms, and the agent is told), the API and
 the MCP server on 127.0.0.1 (so `approval_mode: none` is allowed), the operator page on the LAN as configured, and
 the recording folders: robotd's log in $ROBOT_USE_HOME/agent_logs and the programs and episodes in
 $ROBOT_USE_HOME/episodes (default ~/.tensortron/robot-use; stack/paths.py); a --mock run records apart, in
@@ -84,6 +86,9 @@ def main() -> int:
                     help="who approves programs: first_motion (a human, once per program; default), every_motion, "
                          "none (unattended)")
     ap.add_argument("--mock", action="store_true", help="mock arms and cameras instead of the hardware")
+    ap.add_argument("--enable-preview", action="store_true",
+                    help="run each program in the MuJoCo twin first (off by default: programs run directly on the arms, "
+                         "and the agent is told)")
     ap.add_argument("--port-base", type=int, default=8770, help="robotd API at this port, MCP +1, operator +2")
     a = ap.parse_args()
     if not 1024 <= a.port_base <= 65533:
@@ -145,7 +150,7 @@ def main() -> int:
         if stopping.is_set():
             raise Stopping
         mcp_cmd = [sys.executable, "-m", "stack.mcp_server", "--host", "127.0.0.1", "--port", str(a.port_base + 1),
-                   "--robotd", api, "--episodes", str(episodes)]
+                   "--robotd", api, "--episodes", str(episodes)] + ([] if a.enable_preview else ["--no-preview"])
         procs.append(spawn(mcp_cmd, mcp_log, dict(os.environ), hook))
         (home / PIDS_FILE).write_text(" ".join(str(p.pid) for p in procs) + "\n")
         if not wait_http(f"http://127.0.0.1:{a.port_base + 1}/mcp", procs[1], 60, stopping, any_status=True):
@@ -160,6 +165,7 @@ def main() -> int:
 The rig is running{' (MOCK arms)' if a.mock else ''}.
   motion          {motion}
   approval        {approval}
+  twin preview    {'on (each program runs in the twin first)' if a.enable_preview else 'off: every program runs directly on the arms (--enable-preview turns it on)'}
   arms            {'; '.join(arms) or '(see the log)'}
   operator page   http://{lan_address()}:{a.port_base + 2}/   (live cameras, approvals, STOP, torque off)
   MCP server      http://127.0.0.1:{a.port_base + 1}/mcp
@@ -167,7 +173,10 @@ The rig is running{' (MOCK arms)' if a.mock else ''}.
   episodes        {episodes}
 """ + ("""
   ** Motion is enabled: a person must be at the 12 V supply (the e-stop) while the arms can move. **
-""" if a.enable_motion and not a.mock else "") + f"""
+""" if a.enable_motion and not a.mock else "") + ("""
+  ** No approval and no twin preview: a program goes to the arms with only robotd's per-step checks and the
+     contact monitor between it and the hardware. Stay at the 12 V supply; --enable-preview adds the twin. **
+""" if a.enable_motion and not a.mock and a.approval == "none" and not a.enable_preview else "") + f"""
 Next, in another terminal:  cd {REPO / 'agent_ws'} && claude     (or codex)
 Ctrl-C here stops both: a running motion is halted first; the arms then hold where they are, under torque, with
 nothing watching for contact until robotd runs again (torque off: the operator page, or tools/torque_off.py).

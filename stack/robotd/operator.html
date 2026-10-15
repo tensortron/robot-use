@@ -327,12 +327,13 @@ function renderApprovals() {
   for (const p of pendingProgs) if (!(p.program_id in STEP)) STEP[p.program_id] = !!p.step_mode;
   const progHtml = pendingProgs.map(p => {
     const pv = p.preview || {};
-    const pvText = pv.skipped ? "the agent SKIPPED the twin preview: review the code"
+    const pvText = pv.off ? "twin preview OFF for this session: the program runs directly on the robot; review the code"
+      : pv.skipped ? "the agent SKIPPED the twin preview: review the code"
       : pv.twin === null || pv.twin === undefined ? "no twin preview (review the code)"
       : pv.ok ? `twin preview ok: ${pv.steps ?? "?"} steps, ${pv.motion_s ?? "?"} s of motion`
       : `twin preview FAILED: ${pv.reason || pv.status || ""}`;
     return card("approve_" + p.program_id, `Program waiting for approval: ${esc(p.title)} <span class="muted">${esc(p.program_id)} · ${esc(p.holder)}</span>`,
-      `<p class="${(pv.twin && !pv.ok) || pv.skipped ? "bad" : "muted"}">${esc(pvText)}</p>
+      `<p class="${(pv.twin && !pv.ok) || pv.skipped || pv.off ? "bad" : "muted"}">${esc(pvText)}</p>
        <pre class="code">${esc(p.code)}</pre>
        <div class="row">
          <label><input type="checkbox" data-step="${esc(p.program_id)}" ${STEP[p.program_id] ? "checked" : ""}> step mode (approve every step)</label>

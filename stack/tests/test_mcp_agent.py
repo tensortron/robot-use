@@ -131,3 +131,43 @@ def test_check_reach_is_offered_and_tool_calls_count_as_activity(agent):
     assert "check_reach" in {t.name for t in tools.tools}
     assert _json(res)["points"][0]["reachable"] is True
     assert runner._last_client is not None
+
+
+def test_the_preview_switch_turns_the_twin_off_and_tells_the_agent(tmp_path):
+    """Sprint 2026-10-15 (preview switch): --no-preview previews no program, whatever the agent passes, and the
+    agent's instructions and run_program's description say programs run on the live robot."""
+    from stack.mcp_server.server import _default_runner
+    rd = make(tmp_path / "robotd")
+    port = _port()
+    srv = serve(rd, "127.0.0.1", port, operator=False)
+    called = []
+    runner = ProgramRunner(f"http://127.0.0.1:{port}", tmp_path / "ep", preview_off=True,
+                           preview=lambda code, scene=None: called.append(code) or {"twin": "test", "ok": True})
+    try:
+        from stack.runner.runner import default_preview
+        twin = ProgramRunner(f"http://127.0.0.1:{port}", tmp_path / "ep3",
+                             preview=lambda code, scene=None: {"twin": "test", "ok": True})
+        on = build_server(RobotdClient(f"http://127.0.0.1:{port}"), runner=twin, episodes_dir=tmp_path / "ep")
+        off = build_server(RobotdClient(f"http://127.0.0.1:{port}"), runner=runner, episodes_dir=tmp_path / "ep",
+                           preview=False)
+        no_model = build_server(RobotdClient(f"http://127.0.0.1:{port}"), episodes_dir=tmp_path / "ep",
+                                runner=ProgramRunner(f"http://127.0.0.1:{port}", tmp_path / "ep4", preview=default_preview))
+        assert "SWITCHED OFF" in no_model.instructions          # told what really happens: no twin runs
+        assert "SWITCHED OFF" not in on.instructions and "SWITCHED OFF" in off.instructions
+        assert "preview is on" in on.instructions and "preview is on" not in off.instructions
+        (tools_on,), (tools_off,) = _run(on, [("__list__", None)]), _run(off, [("__list__", None)])
+        desc = {t.name: t.description for t in tools_off.tools}["run_program"]
+        assert "LIVE ROBOT" in desc and "LIVE ROBOT" not in {t.name: t.description for t in tools_on.tools}["run_program"]
+        out = runner.submit("x = 1\n", "t", scene=[{"name": "b", "xy": [0.2, 0], "size": [0.04] * 3}], skip_preview=False)
+        assert out["ok"]
+        assert wait(lambda: runner.programs[out["program_id"]].status != "previewing"
+                    and runner.programs[out["program_id"]].preview.get("off"), 10)
+        assert called == []                                        # the twin never ran
+        assert "live robot" in runner.programs[out["program_id"]].preview["note"]
+        runner.stop(out["program_id"])
+        assert _default_runner(RobotdClient(f"http://127.0.0.1:{port}"), tmp_path / "ep2", preview=False).preview_off
+    finally:
+        for pid in list(runner.programs):
+            runner.stop(pid)
+        srv.shutdown()
+        rd.stop()

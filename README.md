@@ -25,8 +25,9 @@ stronger with both.
 ## The loop
 
 1. **You give a task**, for example "put the blue block in the pink cup".
-2. **The agent makes attempts.** It looks through the cameras and writes a program. The program runs first in a
-   MuJoCo twin, then on the robot, with checkpoints where the agent looks again and continues, refines or aborts.
+2. **The agent makes attempts.** It looks through the cameras and writes a program. The program runs on the robot,
+   with checkpoints where the agent looks again and continues, refines or aborts. (With `--enable-preview`, each
+   program runs first in a MuJoCo twin.)
 3. **It saves what it learned as a skill.** A first success is discovery, so it is saved as a draft. Once the
    draft has run cleanly twice in a row on different layouts, and you approve it, it becomes a validated skill.
 4. **It applies the skill every time** the task, or a larger task built from it, comes up again.
@@ -41,13 +42,14 @@ lives in one measured file (`robot.yaml`), so the architecture is meant to scale
 ## How it works
 
 An LLM agent drives the arms only by writing Python programs. A safety daemon, robotd, plans and checks every motion
-before any servo moves. Each program runs first in a MuJoCo twin, then in a sandbox. For the details, the switches
+before any servo moves. Each program runs in a sandbox; with `--enable-preview` it runs first in a MuJoCo twin. For
+the details, the switches
 (motion, approval, preview) and their defaults, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ```mermaid
 flowchart LR
     agent["Agent<br/>(Claude Code, Codex)"] -- "MCP tools" --> mcp["MCP server<br/>+ runner"]
-    mcp -- "1: preview" --> twin["MuJoCo twin"]
+    mcp -- "1: preview (--enable-preview)" --> twin["MuJoCo twin"]
     mcp -- "2: run, sandboxed" --> prog["the agent's program"]
     prog -- "each step" --> mcp
     mcp -- "steps" --> robotd["robotd<br/>plans, checks, moves"]
@@ -94,6 +96,9 @@ uv run python tools/doctor.py
 ```bash
 uv run python tools/run_sim.py                 # a new layout each run; --seed N repeats one
 ```
+
+Programs run directly on the simulated arms. Add `--enable-preview` to run each one in a MuJoCo twin first (the agent
+is told which way it works).
 
 Open the operator page it prints (http://127.0.0.1:8772/): you see the cameras, each program as it runs, and STOP.
 
@@ -158,7 +163,11 @@ What the stack records (robotd's log, every program with its trace and keyframes
    uv run python tools/run_rig.py --enable-motion     # you approve each program on the operator page
    uv run python tools/run_rig.py --enable-motion --approval none
                                                       # programs run without your approval (still a person at 12 V)
+   uv run python tools/run_rig.py --enable-motion --enable-preview
+                                                      # each program runs in the MuJoCo twin first
    ```
+
+   By default programs go straight to the arms, after robotd's checks; `--enable-preview` adds the twin.
 
    Then `cd agent_ws && claude`, as in the sim.
 

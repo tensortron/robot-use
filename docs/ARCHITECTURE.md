@@ -92,7 +92,8 @@ It reads `/state`, `/limits`, `/programs` and `/history`; the runner tells robot
 
 ## What stops a bad motion
 
-In order: the **twin preview** rejects a program whose steps fail in simulation; **robotd's checks** refuse a step
+In order: the **twin preview**, when it is on (`--enable-preview`), rejects a program whose steps fail in
+simulation; **robotd's checks** refuse a step
 (joint limits, the floor and board, obstacles, the other arm, the jaw collision shapes); the **contact monitor** stops
 a push (lag and current) and backs off; the **budgets** end a runaway program; the **operator page's STOP**; and the
 **12 V supply**, the real e-stop. The agent cannot reach robotd, the hardware, files or the network except through
@@ -130,7 +131,7 @@ report.
 | **motion** | `motion_enabled` in robotd's config; `--enable-motion` (robotd, `run_rig.py`) | off / on | **off** (read-only) | on, via `--enable-motion` | off: robotd reads and plans but moves nothing. `--sim` turns it on (nothing physical) |
 | **approval** | `approval_mode` in robotd's config; `run_rig.py --approval` | `first_motion`, `every_motion`, `none` | **`first_motion`** | **`none`** (`--approval none`) | `first_motion`: a human approves each program once on the operator page; `every_motion`: every motion; `none`: no approval (needs `mcp_localhost_only: true`). A blocked arm always needs re-approval. The sim uses `none` |
 | **step mode** | `run_program(..., step_mode=True)` | off / on | off | off | every step of that program waits for a human's approval |
-| **twin preview** | MCP server; `run_program(..., skip_preview=True)` | on / skipped | **on** whenever the SO-101 MuJoCo model is installed (`tools/fetch_so101_assets.py`); without it, no preview | on | each program runs in the twin first; a failed preview rejects it. The agent can skip it per program (the human is told) |
+| **twin preview** | `run_rig.py` / `run_sim.py --enable-preview`; MCP `--no-preview`; per program `run_program(..., skip_preview=True)` | on / off for the session / skipped per program | **off** with the launchers (`--enable-preview` turns it on); on for `python -m stack.mcp_server` alone, when the SO-101 MuJoCo model is installed | off | on: each program runs in the twin first, and a failed preview rejects it. Off: no program is previewed, the agent's instructions and `run_program` say it works directly on the live robot, and the approval card says so. Per program, the agent can skip it (the human is told) |
 | **contact monitor** | `contact.mode` in robotd's config | `act`, `record_only` | `act` | `act` | `act`: stop and back off on contact; `record_only`: log only |
 | **idle rest** | `idle_rest_s` | seconds | 600 | 600 | an arm held this long without a command goes slowly to rest |
 | **localhost only** | `mcp_localhost_only` | true / false | false | true (`run_rig.py` always) | required for `approval_mode: none`; the MCP server must then be bound to 127.0.0.1 |

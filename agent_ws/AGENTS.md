@@ -28,7 +28,8 @@ reason if anything is unsafe; a human approves each program before it runs, and 
   and grasps.
 - **Check reach before you write.** `check_reach(arm, points)` answers instantly whether the gripper tip can
   be at each point (and at which pitches), and whether that pose clears the table, obstacles and the other
-  arm. A program that tries an unreachable point only finds out in the twin preview, a minute later.
+  arm. A program that tries an unreachable point only finds out when it runs: from the twin preview, or, without
+  one, when the robot refuses that step part-way through the program.
   Inside a program, `arm(...).reach(points)` asks the same question without moving.
 - **Programs carry beliefs.** Positions you read off images are estimates with a few centimetres of error.
   Make them `estimate(...)` objects with a tolerance, and put a `checkpoint(...)` where a wrong estimate
@@ -37,7 +38,9 @@ reason if anything is unsafe; a human approves each program before it runs, and 
   1. `begin_episode(instruction)`.
   2. Observe; estimate the objects (positions and sizes).
   3. Write the program; `run_program(code, title, scene=[{name, xy, size}, ...])` with the objects you
-     believe in. It is **previewed in a simulated twin** first: a failed preview comes back with the
+     believe in. **Your tools' instructions say whether this session previews programs in a simulated
+     twin.** Usually it does not: programs run directly on the live robot, so check reach with
+     `check_reach` first and keep first motions slow. When it does, a failed preview comes back with the
      reason - fix and resubmit. Trust the preview on reach, the plan and safety; not on grasps - its
      grasp physics often differ from the real robot, and it places objects square (no rotation).
   4. Then it waits for a **human to approve it** on the operator page: tell the user it is waiting.

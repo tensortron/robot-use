@@ -27,6 +27,7 @@ def main():
                     help="debug surface: which way of commanding the arms to offer (design doc phase 6b)")
     ap.add_argument("--episodes", default=None,
                     help="where episodes and programs are recorded (default $ROBOT_USE_HOME/episodes, ~/.tensortron/robot-use/episodes)")
+    ap.add_argument("--no-preview", action="store_true", help="the twin preview off for this session: every program runs directly on the live robot (the agent is told; robotd still checks every step)")
     ap.add_argument("--allow-host", action="append", default=[],
                     help="extra Host header value clients use to reach this server (e.g. a DNS name)")
     a = ap.parse_args()
@@ -49,9 +50,9 @@ def main():
         allowed_hosts=[f"{h}:*" for h in hosts] + hosts,
         allowed_origins=[f"http://{h}:*" for h in hosts])
     mcp = build_server(RobotdClient(a.robotd), public_url=public, tool_set=a.tools, surface=a.surface,
-                       episodes_dir=a.episodes)
-    logging.info("MCP server on http://%s:%d/mcp (public %s/mcp), robotd %s, allowed hosts %s",
-                 a.host, a.port, public, a.robotd, hosts)
+                       episodes_dir=a.episodes, preview=not a.no_preview)
+    logging.info("MCP server on http://%s:%d/mcp (public %s/mcp), robotd %s, allowed hosts %s%s",
+                 a.host, a.port, public, a.robotd, hosts, "; TWIN PREVIEW OFF" if a.no_preview else "")
     mcp.run("streamable-http", host=a.host, port=a.port, transport_security=security)
 
 

@@ -137,11 +137,12 @@ def default_preview(code: str, scene=None) -> dict:
 class ProgramRunner:
     def __init__(self, robotd: RobotdClient | str = "http://127.0.0.1:8770",
                  episodes_dir: Path | str | None = None, budgets: Budgets | None = None,
-                 preview=default_preview, holder: str = "runner"):
+                 preview=default_preview, holder: str = "runner", preview_off: bool = False):
         self.robotd = robotd if isinstance(robotd, RobotdClient) else RobotdClient(robotd)
         self.episodes = Path(episodes_dir).expanduser() if episodes_dir else paths.episodes()
         self.budgets = budgets or Budgets()
         self.preview = preview
+        self.preview_off = preview_off               # the session's switch (MCP --no-preview): no program is previewed
         self.holder = holder
         self.programs: dict[str, Program] = {}
         self._lock = threading.Condition()
@@ -263,8 +264,12 @@ class ProgramRunner:
 
     def _run_inner(self, p: Program):
         try:
-            self._set(p, "previewing")
-            if p.preview.get("skipped"):
+            if not self.preview_off:
+                self._set(p, "previewing")
+            if self.preview_off:
+                p.preview = {"twin": None, "off": True,
+                             "note": "the twin preview is switched off for this session: the program runs on the live robot"}
+            elif p.preview.get("skipped"):
                 p.preview = {"twin": None, "skipped": True, "note": "the agent skipped the twin preview"}
             else:
                 p.preview = self.preview(p.code, p.scene) or {}

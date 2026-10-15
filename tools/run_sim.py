@@ -4,6 +4,7 @@
     python tools/run_sim.py                     # the block_cup scene, a new layout each run
     python tools/run_sim.py --seed 7            # repeat a layout (the seed is printed at start)
     python tools/run_sim.py --scene my.yaml     # another scene file (stack/twin_mujoco/scenes/*.yaml format)
+    python tools/run_sim.py --enable-preview    # each program runs in the MuJoCo twin first (off by default)
 
 Then, in another terminal: `cd agent_ws && claude` (or `codex`), and give the agent a task, e.g. "put the blue block
 in the pink cup". Watch it on the operator page (printed below).
@@ -57,6 +58,9 @@ def main() -> int:
     ap.add_argument("--home", default=None,
                     help="where the sim's logs, programs and episodes go (default $ROBOT_USE_HOME/sim, ~/.tensortron/robot-use/sim)")
     ap.add_argument("--port-base", type=int, default=8770, help="robotd API at this port, MCP +1, operator +2")
+    ap.add_argument("--enable-preview", action="store_true",
+                    help="run each program in the MuJoCo twin first (off by default: programs run directly on the "
+                         "simulated arms, and the agent is told)")
     a = ap.parse_args()
     if not 1024 <= a.port_base <= 65533:
         ap.error("--port-base must be between 1024 and 65533")
@@ -128,7 +132,7 @@ def main() -> int:
             print(f"robotd --sim did not start. Its log ({rd_log}):\n{tail(rd_log)}", file=sys.stderr)
             return 1
         mcp_cmd = [sys.executable, "-m", "stack.mcp_server", "--host", "127.0.0.1", "--port", str(a.port_base + 1),
-                   "--robotd", api, "--episodes", str(home / "episodes")]
+                   "--robotd", api, "--episodes", str(home / "episodes")] + ([] if a.enable_preview else ["--no-preview"])
         if stopping.is_set():
             raise Stopping
         procs.append(spawn(mcp_cmd, mcp_log, env, hook))
@@ -146,6 +150,7 @@ The simulated rig is running.
   operator page   http://127.0.0.1:{a.port_base + 2}/      (live cameras, STOP; on a remote machine, an SSH tunnel)
   MCP server      http://127.0.0.1:{a.port_base + 1}/mcp   (agent_ws/.mcp.json{'' if a.port_base == 8770 else ' needs this port'})
   robotd API      {api}/state
+  twin preview    {'on (each program runs in the twin first)' if a.enable_preview else 'off: programs run directly on the simulated arms (--enable-preview turns it on)'}
   logs            {home / 'logs'}
   episodes        {home / 'episodes'}
 

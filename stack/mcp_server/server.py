@@ -146,13 +146,26 @@ an object's height for its top). Use marks=[{"xyz": [...], "label": "..."}] to s
 point would appear before you act on it. The wrist cameras show the jaws at the bottom of the image.
 
 Working: begin_episode(instruction) first. Write a program (the API is in the robot_use README in
-your instructions), give run_program the scene you believe in (objects with xy and size): it is
-previewed in a simulated twin first, then a human approves it on the operator page (tell the user
-it is waiting). Poll program_status(id, wait_s). At a checkpoint you see the evidence images: resume
+your instructions) and give run_program the scene you believe in (objects with xy and size). A human
+approves it on the operator page (tell the user it is waiting). Poll program_status(id, wait_s). At a checkpoint you see the evidence images: resume
 with continue, refine (move estimates within their tolerance) or abort. When something fails, read
-get_program_trace and fix the program; a failed preview comes back with the reason. Finish with
+get_program_trace and fix the program. Finish with
 end_episode(outcome, notes). stop() halts everything at once.
 """
+
+PREVIEW_ON_NOTE = """
+
+The twin preview is on for this session: each program runs in a simulated twin first, and a failed
+preview comes back with the reason - fix and resubmit. Trust it on reach, the plan and safety, not on
+grasps."""
+
+PREVIEW_OFF_NOTE = """
+
+THERE IS NO TWIN PREVIEW in this session (SWITCHED OFF): your programs are not simulated first, they run
+directly on the live robot (after a human approves them, when approval is on). skip_preview and scene
+make no difference. Check reach with check_reach before you submit, keep first motions slow, use
+checkpoints before contact, and read program_status as each program runs."""
+
 
 
 def _frame_path(camera: str, max_side: int, quality: int, overlay: bool) -> str:
@@ -210,20 +223,26 @@ def _motion_result(out: dict) -> dict:
 
 
 def build_server(robotd: RobotdClient, public_url: str | None = None, tool_set: str = "all", surface: str = "agent",
-                 runner=None, episodes_dir: Path | str | None = None) -> MCPServer:
+                 runner=None, episodes_dir: Path | str | None = None, preview: bool = True) -> MCPServer:
     """``surface``: "agent" (default: observe, geometry, programs, episodes - the agent acts only through
     programs) or "debug" (observe + the direct motion tools, for people debugging the stack).
     ``runner``: the ProgramRunner (agent surface); created against robotd if not given.
     ``public_url``: this server's base URL as clients reach it, for frame URLs (image_mode='url').
-    ``tool_set`` (debug surface): "all", or "joint" / "cartesian" to offer one way of commanding the arms."""
+    ``tool_set`` (debug surface): "all", or "joint" / "cartesian" to offer one way of commanding the arms.
+    ``preview``: False switches the twin preview off for the session (MCP --no-preview): the agent is told, and
+    every program runs on the live robot without it."""
     if tool_set not in TOOL_SETS:
         raise ValueError(f"tool_set must be one of {TOOL_SETS}")
     if surface not in SURFACES:
         raise ValueError(f"surface must be one of {SURFACES}")
     debug = surface == "debug"
     joint_tools, cart_tools = debug and tool_set in ("all", "joint"), debug and tool_set in ("all", "cartesian")
+    if runner is None and surface == "agent":
+        runner = _default_runner(robotd, episodes_dir, preview)
+    preview = previews(runner) if runner is not None else preview   # what really happens, not what was asked
+    agent_text = AGENT_INSTRUCTIONS + (PREVIEW_ON_NOTE if preview else PREVIEW_OFF_NOTE)
     mcp = MCPServer(name="so101-bimanual", title="SO-101 bimanual rig",
-                    instructions=INSTRUCTIONS if debug else AGENT_INSTRUCTIONS, version="0.3")
+                    instructions=INSTRUCTIONS if debug else agent_text, version="0.3")
     # Every tool call is a sign of life from the client: the runner aborts a program left waiting at a
     # checkpoint after the client goes quiet (review 2026-10-03: closing the agent left one holding the lease).
     activity = {"fn": None}
@@ -398,7 +417,7 @@ def build_server(robotd: RobotdClient, public_url: str | None = None, tool_set: 
 
 
     else:
-        _agent_tools(mcp, robotd, runner, episodes_dir)
+        _agent_tools(mcp, robotd, runner, episodes_dir, preview)
 
     @mcp.custom_route("/frame/{camera}", methods=["GET"], include_in_schema=False)
     async def frame_route(request):
@@ -423,8 +442,17 @@ def build_server(robotd: RobotdClient, public_url: str | None = None, tool_set: 
 
 
 
-def _default_runner(robotd: RobotdClient, episodes_dir):
+def previews(runner) -> bool:
+    """Whether this runner really runs a twin preview: not with the session's switch off, nor without the MuJoCo
+    model (default_preview only asks the human to review the code)."""
+    from stack.runner.runner import default_preview
+    return not getattr(runner, "preview_off", False) and getattr(runner, "preview", None) is not default_preview
+
+
+def _default_runner(robotd: RobotdClient, episodes_dir, preview: bool = True):
     from stack.runner.runner import ProgramRunner, default_preview
+    if not preview:                                     # the session's switch: no twin at all
+        return ProgramRunner(robotd.base, episodes_dir, preview=default_preview, holder="mcp", preview_off=True)
     try:
         from stack.twin_mujoco.scene import assets_dir
         from functools import partial
@@ -450,13 +478,13 @@ def _small_jpeg(path: Path, max_side: int = 512) -> bytes | None:
     return buf.tobytes() if ok else None
 
 
-def _agent_tools(mcp, robotd: RobotdClient, runner, episodes_dir):
+def _agent_tools(mcp, robotd: RobotdClient, runner, episodes_dir, preview: bool = True):
     """The agent surface: geometry, programs, episodes. The agent never commands a motion directly."""
     import datetime as _dt
 
     from robot_use import geometry as geo
 
-    runner = runner or _default_runner(robotd, episodes_dir)
+    runner = runner or _default_runner(robotd, episodes_dir, preview)
     if hasattr(runner, "note_client_activity"):
         mcp._robot_use_activity["fn"] = runner.note_client_activity
     from stack import paths
@@ -531,7 +559,19 @@ def _agent_tools(mcp, robotd: RobotdClient, runner, episodes_dir):
         return out
 
     # ---------------------------------------------------------------- programs
+    run_program_doc = ("Submit a program: static check, twin preview, then human approval, then it runs. Returns at "
+                       "once; follow it with program_status(program_id, wait_s)." if preview else
+                       "Submit a program: static check, then human approval (when approval is on), then it runs "
+                       "DIRECTLY ON THE LIVE ROBOT: the twin preview is switched off for this session, so scene and "
+                       "skip_preview make no difference. Returns at once; follow it with program_status(program_id, "
+                       "wait_s).")
+
+    def _with_doc(fn):
+        fn.__doc__ = run_program_doc
+        return fn
+
     @mcp.tool(annotations=MOVES)
+    @_with_doc
     async def run_program(
         code: Annotated[str, Field(description="Python using robot_use (see the API); runs sandboxed")],
         title: str = "",
@@ -540,8 +580,6 @@ def _agent_tools(mcp, robotd: RobotdClient, runner, episodes_dir):
         step_mode: Annotated[bool, Field(description="the human approves every step (slow; for risky first runs)")] = False,
         skip_preview: bool = False,
     ) -> dict:
-        """Submit a program: static check, twin preview, then human approval, then it runs. Returns at once;
-        follow it with program_status(program_id, wait_s)."""
         out = await call(runner.submit, code, title or "", step_mode, scene or [], skip_preview,
                          ep["dir"] if ep["dir"] is not None else None)
         if out.get("program_id") and ep["id"] is not None:
