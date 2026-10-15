@@ -1,0 +1,49 @@
+# Python environment — 7.6 GB, rebuilt from docs/environment.md
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Datasets and checkpoints belong on the HF Hub, not here
+data/
+datasets/
+outputs/
+checkpoints/
+wandb/
+*.safetensors
+*.mcap
+
+# Captured frames / scratch
+*.jpg
+*.jpeg
+*.png
+*.mp4
+/tmp/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# The operating agent's own skills: not committed while the agent setup is still being iterated on
+# (a skill encodes what the agent learned under that setup). Keep the folder itself.
+agent_ws/.agents/skills/*
+!agent_ws/.agents/skills/.gitkeep
+
+# The operating agent's permissions, rendered for this machine by tools/setup_agent_ws.py from the templates beside them
+agent_ws/.agents/settings.json
+agent_ws/.pi/extensions/pi-permission-system/config.json
+
+# tools/platform_check.py reports
+platform_check-*.txt
+seatbelt_diagnose-*.txt
+
+# tools/calibrate.py: files on their way into place (backups go to $ROBOT_USE_HOME/calibration/backups)
+robot.yaml.tmp
+robot.yaml.bak-*
+calib/*.tmp
+calib/*.bak-*
+
+# udev rules filled in from the templates: they name your own devices (docs/HARDWARE_SETUP.md)
+udev/*.rules

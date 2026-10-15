@@ -1,0 +1,42 @@
+[project]
+name = "robot-use"
+version = "0.1.0"
+description = "LLM agents drive SO-101 arms by writing Python programs, which a safety daemon checks before any servo moves"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+# The core runs the whole stack without hardware: robotd (mock or simulated arms), the runner, the MuJoCo twin and
+# the MCP server. Real arms need the `hardware` extra.
+dependencies = [
+    "numpy>=2.0,<2.3",                    # the bound lerobot sets (opencv-python-headless)
+    "scipy>=1.11",
+    "pyyaml>=6.0",
+    "opencv-python-headless>=4.9,<4.14",
+    "mujoco>=3.14",                       # the tested floor (MjSpec attach/meshname as used by the twin)
+    "mcp>=2.2,<3",
+    "pydantic>=2",                        # imported directly by the MCP server (also pulled in by mcp)
+    "anyio>=4",
+    "starlette>=0.40",
+    "ruamel.yaml>=0.18,<0.19",            # tools/calibrate.py edits robot.yaml and keeps its comments
+]
+
+[project.optional-dependencies]
+# Real arms: lerobot's Feetech bus (pinned to the commit the stack was built against) and its serial deps.
+# On a Jetson, torch comes from a CUDA index instead: see docs/environment.md.
+hardware = [
+    "lerobot[feetech] @ git+https://github.com/huggingface/lerobot@bf31dd794ffb4f87380aba3912f64421e8352d3c",
+]
+dev = [
+    "pytest>=8",
+    "trimesh>=4",                         # the jaw-collision test
+]
+
+[tool.uv]
+package = false                           # run from the checkout: `python -m stack.robotd`, lib/ on the path
+environments = ["sys_platform == 'linux'", "sys_platform == 'darwin'"]
+
+[tool.pytest.ini_options]
+testpaths = ["stack/tests"]
+markers = [
+    "hardware: needs the hardware extra (lerobot, the Feetech SDK); never opens a real port",
+]

@@ -1,0 +1,4 @@
+# Codex project config for the operating agent's workspace (Codex reads agent_ws/.codex/; it must be a real
+# folder - Codex's sandbox keeps .codex read-only and refuses a symlink there). The robot: only this MCP server.
+[mcp_servers.so101]
+url = "http://127.0.0.1:8771/mcp"

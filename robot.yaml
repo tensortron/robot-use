@@ -1,0 +1,135 @@
+# THE measured description of the bimanual SO-101 rig. Single source of truth (docs/ARCHITECTURE.md):
+# robotd, the runner, the library and the twin all derive their geometry from this file. The twin's
+# robots/so101.yaml (the Digital Twin, a separate repository) is checked against it.
+#
+# Every value has a `sources` entry: "measured <date> <how>", "file <path>", "CAD", "inferred", or
+# "derived". Change a value only together with its source.
+#
+# RIG FRAME: origin on the WORK SURFACE (the table the board stands on) midway between the two
+# shoulder-pan axes. +x forward (toward the workspace), +y to the robot's left, +z up. Metres, degrees.
+# The twin's sim world differs only by an offset: sim = rig + (urdf pan-axis x, 0, -board thickness).
+
+version: 1
+
+arms:
+  pan_axis_separation_m: 0.3715          # left pan axis at y = +0.18575, right at y = -0.18575, both at x = 0
+  urdf: stack/assets/so101_new_calib_camera.urdf   # SO-ARM100 new_calib + the Hex-Nut 32x32 wrist camera (our mount)
+  # The URDF base origin sits behind/below its pan axis by the shoulder_pan joint origin; the loader reads
+  # that offset from the URDF (0.0388, 0, 0.0624) instead of storing a copy here.
+  base_plane: board_top                  # the arm base plates stand on the board
+  left:
+    calibration_id: bi_follower_left
+    yaw_deg: 0.0                         # both arms face +x
+    joint_signs: [1, 1, 1, 1, 1]         # shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll
+    joint_offsets_deg: [0, 3.1, -8.0, -0.1, 0]
+    base_z_offset_m: 0.0048              # the arm's base frame sits this much above base_plane (optional, default 0)
+  right:
+    calibration_id: bi_follower_right
+    yaw_deg: 0.0
+    joint_signs: [1, 1, 1, 1, 1]
+    joint_offsets_deg: [0, 0, -9.2, -3.1, 0]
+    base_z_offset_m: 0.0057              # the arm's base frame sits this much above base_plane (optional, default 0)
+  sources:
+    pan_axis_separation_m: measured 2026-09-22 after bolting both arms to the board (tape, pan axis to pan axis)
+    yaw_deg: inferred (arms bolted square to the board); rig check 5 confirms with the overlay
+    joint_signs: inferred - lerobot DEGREES fed to the URDF unchanged, as lerobot's own kinematics; lift/elbow
+      consistent with the folded rest pose; all five verified on both arms 2026-10-03 by servo nudges (rig checks 1-4)
+    joint_offsets_deg: LEFT measured 2026-10-03 (rig check 5), same method, two poses, all three free (holding lift
+      at 0 left 3.2 mm residuals); rms 1.0 mm. Both arms show elbow ~ -8..-9 deg and base ~ +5 mm, likely the
+      URDF's elbow zero and base height vs the real parts rather than per-arm calibration. RIGHT measured
+      2026-10-03 (rig check 5) - tape heights of the lift, elbow and wrist pivots and the jaw tip in two
+      poses, least-squares fit with lift held at 0 (its free fit was -0.5 +/- 1.3); residuals <= 0.8 mm
+    base_z_offset_m: RIGHT measured 2026-10-03 with the offsets above (lift pivot 14.0 cm above the table vs
+      the URDF's 13.46 cm); LEFT 13.81 cm, fitted 4.8 mm
+
+board:
+  thickness_m: 0.018
+  front_edge_x_m: 0.025                  # ahead of the pan-axis line
+  side_margin_m: 0.064                   # outboard of each pan axis -> side edges at y = +/-(0.18575 + 0.064)
+  sources:
+    thickness_m: measured 2026-09-22
+    front_edge_x_m: measured 2026-10-01 (tape from the pan-axis line)
+    side_margin_m: measured 2026-10-01 (tape from each pan axis)
+  # No table outline on purpose: the board is put on different tables. The work surface is z = 0.
+
+obstacles:
+  camera_stand:                          # rectangular column from the board to the ego camera
+    front_face_x_m: -0.075               # behind the pan-axis line
+    depth_x_m: 0.040
+    width_y_m: 0.025
+    centre_y_m: 0.0                      # centred between the arms
+    top_z_m: 0.700
+  camera_head:                           # the camera module on the stand's front face
+    min: [-0.090, -0.025, 0.680]
+    max: [-0.045, 0.025, 0.740]
+  sources:
+    camera_stand: measured 2026-10-01 (front face 75 mm behind origin, 40 x 25 mm, centred); top_z_m derived
+      from the camera height
+    camera_head: inferred around the measured camera height; the module is physically centred (the camera's
+      -20 mm optical-centre offset is how the sensor sees the view, not where it is)
+
+cameras:
+  ego:
+    device: /dev/cam_ego
+    mode: {width: 1280, height: 720, fps: 30, fourcc: MJPG}
+    intrinsics_file: calib/ego_intrinsics.json    # relative to the repo (or absolute, or ~/...); this rig's data,
+    extrinsics_file: calib/ego_extrinsics.json    # like robot.yaml: kept out of stack/rig, which agents may read
+    # summary of the calibration: the files win when named; without them the stack builds the camera from these
+    # numbers (an estimate: Rig.camera_model, docs/CALIBRATION.md)
+    eye_m: [-0.062, -0.020, 0.708]       # optical centre, rig frame
+    tilt_down_deg: 25.2                  # from straight down (64.8 below horizontal)
+    yaw_deg: -1.4                        # toward the robot's right
+    roll_deg: -0.8                       # about the optical axis (stack.rig.camera_model.CameraModel.pose_estimate)
+    fov_h_deg: 75.2
+    distortion:
+      model: opencv_pinhole
+      focal_px: [830.6, 829.5]
+      principal_point_px: [587.0, 365.4]
+      coeffs: [-0.4158, 0.1800, -0.00083, -0.00206, -0.0366]
+  wrist_left:
+    device: /dev/cam_wrist_left
+    mode: {width: 1024, height: 576, fps: 30, fourcc: MJPG}
+    urdf_link: wrist_camera_link         # optical frame (x right, y down, z forward); pose comes from the URDF
+    fov_h_deg: 75.4
+  wrist_right:
+    device: /dev/cam_wrist_right
+    mode: {width: 1024, height: 576, fps: 30, fourcc: MJPG}
+    urdf_link: wrist_camera_link         # optical frame (x right, y down, z forward); pose comes from the URDF
+    fov_h_deg: 75.4
+  sources:
+    ego: measured 2026-09-22 - intrinsics checkerboard 27 frames rms 0.282 px; extrinsics solve_extrinsics rms
+      0.159 px, one board placement (docs/camera-calibration.md)
+    wrist urdf_link: the upstream SO-ARM100 camera variant of our URDF (so101_new_calib_camera.urdf @ 5f6d2b8,
+      Hex-Nut 32x32 UVC mount = the mount on both arms, operator 2026-10-05). Its optical frame agrees with what was
+      observed - at roll 0 the camera is on the arm's own left seen from behind and the wrist image's right points
+      up; at roll +90 (CCW from behind) it is underneath - to within 1.8 deg. Replaced the twin's hand-copied mount,
+      which was in a frame rotated ~88-90 deg from ours and ~4 cm off in position (sprint 2026-10-05, D7).
+      UNVERIFIED on the rig to the mm - rig check 7c (wrist crosshair).
+    wrist fov_h_deg: inferred from the ego unit (same camera model; the 1024x576 mode scales the sensor region)
+
+gripper:
+  span_deg: 131.08                       # lerobot RANGE_0_100: 0 = jaws touching, 100 = physical stop
+  sim_map: {scale: 0.762911, offset: 8.6209}   # real = scale * sim_deg + offset (sim jaws touch at -11.3)
+  sources:
+    span_deg: measured 2026-09-05 (1491 ticks on both arms)
+    sim_map: file Digital Twin scripts/newton/robots/so101.yaml (measured from the sim meshes)
+
+tcp:
+  frame: gripper_frame_link              # the jaw mouth; URDF fixed joint from gripper_link
+  sources:
+    frame: file stack/assets/so101_new_calib_camera.urdf (same chain as so101_new_calib.urdf); same frame as the twin's `gripperframe`
+
+grasp:                                   # knowledge carried over from the twin (T7); re-validate on the rig
+  test_cube_m: 0.040
+  tcp_minus_object_centre_m: [-0.0236, 0.0, -0.0130]
+  object_yaw_ok_deg: 15                  # grasps validated for |yaw| <= 15, fail at >= 30 (cube symmetry folds to 45)
+  sources:
+    test_cube_m: file Digital Twin so101_scene.py CUBE
+    tcp_minus_object_centre_m: measured in sim (twin, world-frame difference vector, frame-independent);
+      recorded before the Digital Twin's 78f6194 moved the table 18 mm - CONFIRM still valid
+    object_yaw_ok_deg: measured in sim (twin workspace.yaw_range)
+  # Not imported: the twin's sampling ranges (workspace.x_range etc.) and its "0.20-0.38 m grasp band".
+  # They are sim-frame (x from the arm roots; subtract 0.0388 for the rig frame) and partly predate the
+  # 2026-09-22 rig move - ask the twin which still hold before using them.
+
+description_file: stack/rig/embodiment.md   # the robot described in words, for agent prompts

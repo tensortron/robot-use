@@ -1,0 +1,32 @@
+# The simulated rig's default scene: a block and two cups on the table, as in the pick-and-place trials.
+# Sizes and colours follow the objects used on the real rig (2026-10): a 4 cm blue block, a pink cup ~8.5 cm across
+# and a cream cup ~7 cm across. Positions are drawn from the ranges below (rig frame, metres) from a seed:
+# `robotd --sim --seed N` repeats a layout. Objects stand on the table, clear of the board and of each other.
+name: block_cup
+description: a blue block and two cups (pink, cream) on the table in front of the arms
+min_gap_m: 0.03                      # between object footprints
+objects:
+  - name: blue_block
+    shape: box
+    size: [0.04, 0.04, 0.04]
+    rgba: [0.10, 0.35, 0.85, 1]
+    mass: 0.03
+    x: [0.18, 0.30]
+    y: [-0.22, 0.22]
+    yaw_deg: [-30, 30]
+  - name: pink_cup
+    shape: cup
+    size: [0.085, 0.085, 0.05]       # outer diameter, diameter, height
+    wall_m: 0.004
+    rgba: [0.95, 0.40, 0.65, 1]
+    mass: 0.04
+    x: [0.18, 0.30]
+    y: [-0.24, 0.24]
+  - name: cream_cup
+    shape: cup
+    size: [0.07, 0.07, 0.055]
+    wall_m: 0.004
+    rgba: [0.95, 0.92, 0.78, 1]
+    mass: 0.04
+    x: [0.18, 0.30]
+    y: [-0.24, 0.24]

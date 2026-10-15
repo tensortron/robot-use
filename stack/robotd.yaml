@@ -1,0 +1,41 @@
+# robotd configuration (wiring and behaviour). See docs/ARCHITECTURE.md (the switches) and docs/SAFETY.md; items
+# marked (rig check n) were set from this rig's bench checks.
+
+motion_enabled: false          # keep false here; a session turns motion on with --enable-motion
+approval_mode: first_motion    # first_motion | every_motion | none (none needs mcp_localhost_only: true)
+armed_timeout_s: 1800          # a first_motion session disarms after 30 min without commands
+idle_rest_s: 600               # holding with no command for 10 min -> slowly to the rest pose
+mcp_localhost_only: false      # set true only if the MCP server is bound to 127.0.0.1
+contact:                       # (rig checks: phase 2 records the real thresholds; these are placeholders)
+  mode: act                    # act | record_only
+  lag_deg: 8.0
+  current_ma: 500
+  ticks: 5
+  backoff_deg: 3.0
+  grip_full_effort_ma: 800
+loop_hz: 50                    # (rig check 8)
+
+# Geometry, joint signs/offsets, the board, obstacles and camera calibration come from ../robot.yaml (the
+# single measured source; docs/ARCHITECTURE.md). This file holds wiring and behaviour only.
+rig: null                      # null = the repository's robot.yaml
+
+arms:                          # which serial device is which arm
+  left:  {port: /dev/so101_follower_left}
+  right: {port: /dev/so101_follower_right}
+
+cameras: [ego, wrist_left, wrist_right]    # devices and modes from robot.yaml
+overlay_camera: ego                        # the calibrated camera the model overlay is drawn on
+
+safety:                        # overrides of SafetyConfig behaviour (margins, caps, clearances); not geometry
+  hull_margins_m:              # gripper-end convex hulls, surface to surface (sprint 2026-10-05, decision D5)
+    floor: {camera: 0.015, jaws: 0.002, gripper: 0.010}     # camera: 5 mm + 10 mm for the ~1 cm elbow sag
+    obstacle: {camera: 0.020, jaws: 0.020, gripper: 0.020}
+    other_arm: {camera: 0.005, jaws: 0.005, gripper: 0.005, wrist: 0.005}   # all 5 mm: user 2026-10-08 (was 20 mm, D5); a pair takes the larger of its parts' margins, report-only parts the largest
+    own_arm: {camera: 0.005, jaws: 0.005, gripper: 0.005}    # the arm's own shoulder, base, upper arm (task 12)
+  tip_clearance_m: 0.005        # the tip point (TCP) above the floor; 5 mm: user 2026-10-09 (was 20 mm), for cloth grasps. The jaw hulls (2 mm) and the gripper-link points (link_clearance_m, 20 mm) still bind: lowest TCP ~8 mm pointing down, 12-16 mm flatter
+  rest_roll_deg: -90           # the rest with the camera on top (task 6b; wrist cable checked at -90, 2026-10-06)
+
+api:      {host: 127.0.0.1, port: 8770}    # agents' side: localhost only
+operator: {host: 0.0.0.0,   port: 8772}    # human's side: LAN, serves the page, STOP and torque-off
+
+# log_dir: default $ROBOT_USE_HOME/agent_logs, ~/.tensortron/robot-use/agent_logs (stack/paths.py)

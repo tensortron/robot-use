@@ -1,0 +1,20 @@
+# Durable device names for the SO-101 arms. Copy this file to udev/99-so101-arms.rules, fill in your adapters'
+# serials, and install it (docs/HARDWARE_SETUP.md).
+#
+# The arms' USB adapters (CH343, 1a86:55d3) enumerate in any order as /dev/ttyACM*, so the number is not stable.
+# Each adapter has its own serial: the rule keys on that, and the name follows the arm whichever port it is in.
+#
+# Find each serial: power the arms (12 V), plug in the USB, then
+#   .venv/bin/python tools/identify_arms.py
+# and move ONE arm by hand: the serial whose column jumps is that arm's.
+#
+# Install:
+#   sudo cp udev/99-so101-arms.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   ls -l /dev/so101_*
+
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ATTRS{serial}=="<SERIAL_FOLLOWER_LEFT>", SYMLINK+="so101_follower_left", MODE="0660", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ATTRS{serial}=="<SERIAL_FOLLOWER_RIGHT>", SYMLINK+="so101_follower_right", MODE="0660", GROUP="dialout"
+# Leader arms, only if you teleoperate (robot-use does not need them):
+# SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ATTRS{serial}=="<SERIAL_LEADER_LEFT>", SYMLINK+="so101_leader_left", MODE="0660", GROUP="dialout"
+# SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ATTRS{serial}=="<SERIAL_LEADER_RIGHT>", SYMLINK+="so101_leader_right", MODE="0660", GROUP="dialout"

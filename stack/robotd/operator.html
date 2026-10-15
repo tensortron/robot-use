@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>robotd operator</title>
+<style>
+  :root { --bg:#0f1216; --fg:#e8eaed; --dim:#9aa0a6; --card:#181c22; --card2:#1f242b; --line:#2b313a;
+          --ok:#34a853; --warn:#f2b600; --bad:#ea4335; --info:#4c8dff; --left:#ffc850; --right:#3ca0ff; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f3f5f8; --fg:#1f2328; --dim:#59636e; --card:#fff; --card2:#f6f8fa; --line:#d0d7de; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif;
+         display:grid; grid-template-rows:auto 1fr; overflow:hidden; }
+  /* ---------------------------------------------------------------- header: is it safe right now? */
+  header { display:flex; flex-wrap:wrap; gap:8px 10px; align-items:center; padding:8px 14px;
+           border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { font-size:15px; margin:0 6px 0 0; letter-spacing:.02em; }
+  .chip { padding:3px 10px; border-radius:999px; font-weight:600; font-size:12px; border:1px solid var(--line);
+          white-space:nowrap; }
+  .chip.ok { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .chip.warn { color:var(--warn); border-color:color-mix(in srgb, var(--warn) 45%, var(--line)); }
+  .chip.bad { color:#fff; background:var(--bad); border-color:var(--bad); }
+  .chip.info { color:var(--info); }
+  #prog { flex:1 1 260px; min-width:0; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #prog b { font-weight:600; }
+  .controls { display:flex; gap:8px; align-items:center; margin-left:auto; }
+  button { font:inherit; border-radius:8px; border:1px solid var(--line); background:var(--card2);
+           color:var(--fg); padding:6px 12px; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:default; }
+  button.arm { background:var(--ok); color:#fff; border:none; font-weight:700; }
+  button.arm.pending { animation: pulse 1s infinite; }
+  button.stop { background:var(--bad); color:#fff; border:none; font-weight:800; font-size:18px; letter-spacing:.06em;
+                padding:10px 28px; border-radius:10px; box-shadow:0 0 0 3px color-mix(in srgb, var(--bad) 30%, transparent); }
+  button.stop kbd { font-size:11px; font-weight:600; opacity:.85; margin-left:6px; }
+  @keyframes pulse { 50% { opacity:.55; } }
+  select { font:inherit; padding:5px; border-radius:8px; background:var(--card2); color:var(--fg); border:1px solid var(--line); }
+  #msg { position:fixed; left:50%; transform:translateX(-50%); top:62px; z-index:5; max-width:80vw; padding:8px 14px;
+         border-radius:8px; font-weight:600; background:var(--card); border:1px solid var(--line); display:none; }
+  #msg.show { display:block; } #msg.ok { color:var(--ok); } #msg.bad { color:var(--bad); }
+  /* ---------------------------------------------------------------- body: cameras left, cards right (alone scrolls) */
+  main { display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:12px; padding:12px; min-height:0; }  /* cards 380 px, cameras the rest */
+  .cams { display:grid; grid-template-rows:minmax(0,1fr) auto; gap:8px; min-height:0; }
+  .cam { position:relative; background:#000; border-radius:8px; overflow:hidden; min-height:0; display:flex; }
+  .cam img { width:100%; height:100%; object-fit:contain; display:block; }
+  .cam .label { position:absolute; left:8px; top:6px; font-size:11px; font-weight:600; color:#fff;
+                background:rgba(0,0,0,.55); padding:1px 7px; border-radius:6px; }
+  .wrists { display:grid; grid-template-columns:1fr 1fr; gap:8px; height:28vh; min-height:0; }
+  .panel { overflow-y:auto; min-height:0; padding-right:4px; display:flex; flex-direction:column; gap:10px; }
+  @media (max-width: 900px) {
+    body { overflow:auto; display:block; }
+    header { position:sticky; top:0; z-index:4; }          /* STOP stays on screen while scrolling */
+    main { grid-template-columns:minmax(0,1fr); }
+    .cams { grid-template-rows:auto auto; } .cam { height:auto; } .cam img { height:auto; } .wrists { height:auto; }
+    .panel { overflow:visible; }
+  }
+  /* ---------------------------------------------------------------- cards */
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; min-width:0; flex:0 0 auto; }
+  .card.alert { border-color:var(--warn); }
+  .card.fault { border-color:var(--bad); }
+  .card > .head { display:flex; gap:8px; align-items:center; padding:9px 12px; cursor:pointer; user-select:none; }
+  .card > .head h2 { font-size:14px; margin:0; display:flex; flex-wrap:wrap; gap:6px 8px; align-items:center; flex:1;
+                     min-width:0; }
+  .card > .head h2 .tag { white-space:nowrap; }      /* a tag drops to a second line, the switch stays top right */
+  .card > .head .hr { flex:0 0 auto; white-space:nowrap; }
+  .card > .head .chev { color:var(--dim); transition:transform .15s; font-size:11px; width:10px; }
+  .card.open > .head .chev { transform:rotate(90deg); }
+  .card > .body { padding:0 12px 12px; display:none; }
+  .card.open > .body { display:block; }
+  .muted { color:var(--dim); font-size:12px; }
+  .swatch { width:10px; height:10px; border-radius:50%; display:inline-block; flex:0 0 auto; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  pre.code { max-height:300px; overflow:auto; background:var(--card2); border:1px solid var(--line); border-radius:6px;
+             padding:8px; font:12px/1.4 ui-monospace, monospace; white-space:pre; margin:8px 0; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  /* torque switch (off only: torque comes on with a motion, never from here) */
+  .switch { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:2px 4px 2px 8px;
+            border-radius:999px; border:1px solid var(--line); background:var(--card2); cursor:pointer; }
+  .switch .knob { width:30px; height:16px; border-radius:999px; background:var(--line); position:relative; }
+  .switch .knob::after { content:""; position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%;
+                         background:#fff; transition:left .15s; }
+  .switch.on .knob { background:var(--warn); } .switch.on .knob::after { left:16px; }
+  .switch.off { cursor:default; opacity:.8; }
+  /* joints: bars against the calibrated range */
+  .joints { display:grid; grid-template-columns:auto 70px auto auto; justify-content:space-between; gap:3px 10px;
+            align-items:center; font-variant-numeric:tabular-nums; font-size:12px; }
+  .joints .h { color:var(--dim); font-size:11px; }
+  .bar { height:8px; background:var(--card2); border:1px solid var(--line); border-radius:4px; position:relative; }
+  .bar i { position:absolute; top:-2px; width:3px; height:10px; border-radius:2px; background:var(--fg); }
+  .bar .z { position:absolute; top:0; bottom:0; width:1px; background:var(--line); }
+  .num { text-align:right; }
+  /* timeline */
+  .prog { border:1px solid var(--line); border-radius:8px; margin:6px 0; background:var(--card2); }
+  .prog > .ph { display:flex; gap:8px; align-items:baseline; padding:6px 9px; cursor:pointer; }
+  .prog > .ph .t { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .prog > .pb { padding:0 9px 8px; display:none; }
+  .prog.open > .pb { display:block; }
+  .ev { display:flex; gap:8px; font-size:12px; padding:2px 0; border-top:1px dashed var(--line); }
+  .ev:first-child { border-top:none; }
+  .ev .k { width:92px; flex:0 0 auto; color:var(--dim); white-space:nowrap; }
+  .ev .d { flex:1; min-width:0; }
+  .tag { font-size:11px; font-weight:600; padding:0 6px; border-radius:6px; border:1px solid var(--line); margin-left:4px; }
+  .tag.ok { border-color:var(--ok); } .tag.warn { border-color:var(--warn); } .tag.bad { border-color:var(--bad); }
+  .outcome { font-size:12px; margin-top:6px; }
+  /* confirmation: a modal, so it is seen without scrolling */
+  #confirm { position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:10; display:none; align-items:center;
+             justify-content:center; }
+  #confirm.show { display:flex; }
+  #confirm .box { background:var(--card); border:2px solid var(--warn); border-radius:12px; padding:16px 18px;
+                  max-width:min(560px, 92vw); max-height:80vh; overflow:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>robotd</h1>
+  <span id="motion" class="chip">…</span>
+  <span id="approval" class="chip">…</span>
+  <span id="backend" class="chip">…</span>
+  <span id="loop" class="chip">loop …</span>
+  <span id="faults" class="chip" style="display:none"></span>
+  <span id="prog" class="muted">no program</span>
+  <div class="controls">
+    <select id="modeSel" onchange="setMode(this.value)" title="approval mode">
+      <option value="first_motion">approve first motion</option>
+      <option value="every_motion">approve every motion</option>
+    </select>
+    <button id="armBtn" class="arm" onclick="armSession()">ARM</button>
+    <button class="stop" onclick="stopAll()" title="Stop all motion (also Escape). The 12 V supply is the e-stop.">STOP<kbd>Esc</kbd></button>
+  </div>
+</header>
+<div id="msg"></div>
+<div id="confirm"><div class="box"><div id="confirmText"></div>
+  <div class="row"><button class="arm" id="confirmYes">Confirm</button><button onclick="hideConfirm()">Cancel</button></div></div></div>
+<main>
+  <section class="cams">
+    <div class="cam"><span class="label">ego · model overlay (the drawn arms should lie on the real ones)</span>
+      <img src="/stream/ego?overlay=1&max_side=1280&fps=10" alt="ego camera with model overlay"></div>
+    <div class="wrists">
+      <div class="cam"><span class="label">left wrist</span><img src="/stream/wrist_left?max_side=480&fps=5" alt="left wrist camera"></div>
+      <div class="cam"><span class="label">right wrist</span><img src="/stream/wrist_right?max_side=480&fps=5" alt="right wrist camera"></div>
+    </div>
+  </section>
+  <section class="panel">
+    <div id="approvals"></div>
+    <div id="current"></div>
+    <div id="arms"></div>
+    <div id="timeline"></div>
+    <div id="system"></div>
+  </section>
+</main>
+<script>
+const esc = t => String(t ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const J = ["shoulder_pan","shoulder_lift","elbow_flex","wrist_flex","wrist_roll","gripper"];
+const JSHORT = {shoulder_pan:"pan", shoulder_lift:"lift", elbow_flex:"elbow", wrist_flex:"wrist", wrist_roll:"roll", gripper:"gripper"};
+async function post(path, body) {
+  const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body||{})});
+  return r.json();
+}
+// ---------------------------------------------------------------- confirmation (a modal) and messages
+let confirmAction = null;
+function ask(html, action) {
+  document.getElementById("confirmText").innerHTML = html;
+  confirmAction = action;
+  document.getElementById("confirm").classList.add("show");
+}
+function hideConfirm() { document.getElementById("confirm").classList.remove("show"); confirmAction = null; }
+document.getElementById("confirmYes").onclick = async () => { const a = confirmAction; hideConfirm(); if (a) await a(); };
+let msgTimer = null;
+function say(text, ok = true) {
+  const m = document.getElementById("msg");
+  m.textContent = text; m.className = "show " + (ok ? "ok" : "bad");
+  clearTimeout(msgTimer); msgTimer = setTimeout(() => m.classList.remove("show"), ok ? 5000 : 12000);
+}
+// ---------------------------------------------------------------- STOP: the button, and Escape from anywhere
+async function stopAll() {
+  hideConfirm();
+  let r;
+  try { r = await post("/stop"); }
+  catch (e) { say("STOP could not reach robotd: cut the 12 V supply", false); return; }
+  say(r.ok ? `STOP: ${r.stopped && r.stopped.length ? "stopped " + r.stopped.join(", ") : "nothing was moving"}; session disarmed` : `STOP failed: ${JSON.stringify(r)}`, r.ok);
+  refresh();
+}
+// capture phase: Escape reaches STOP before anything on the page handles it (a dropdown the browser has open may
+// still take it: the button is the primary STOP)
+document.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); stopAll(); } }, true);
+async function armSession() {
+  const s = await (await fetch("/state")).json();
+  const p = s.supervisor.pending || [];
+  const what = p.length ? "<ul>" + p.map(m => `<li><b>${esc(m.motion_id)}</b> ${esc(m.kind)} on ${esc(m.arms.join(" + "))},
+      ${m.duration_s} s ${m.targets ? "&rarr; " + esc(JSON.stringify(m.targets)) : ""} <span class="muted">(expires in ${m.expires_in_s} s)</span></li>`).join("") + "</ul>"
+      : "<p>No motion is waiting: this only arms the session.</p>";
+  ask(`<b>ARM and start:</b>${what}Is the workspace clear?`, async () => {
+    const r = await post("/arm");
+    const refused = Object.entries(r.reasons || {}).map(([id, why]) => `${id} not started: ${why}`).join("; ");
+    say(r.ok ? ((r.started.length ? `started ${r.started.join(", ")}` : "armed (nothing was waiting)")
+                + (refused ? ` - ${refused}` : "")) : `ARM failed: ${JSON.stringify(r)}`, r.ok && !refused);
+    refresh();
+  });
+}
+const STEP = {};                                    // program id -> step mode as the operator set it
+async function decide(pid, approve) {
+  const stepOn = !!STEP[pid];
+  const step = {checked: stepOn};
+  const go = async () => {
+    const r = await post(`/program/${pid}/${approve ? "approve" : "deny"}`, {step_mode: stepOn});
+    say(r.ok ? `program ${pid} ${approve ? "approved" : "denied"}` : (r.reason || JSON.stringify(r)), r.ok);
+    shownPrograms = ""; refresh();
+  };
+  if (!approve) return go();
+  ask(`<b>Approve program ${esc(pid)}?</b> It will move the arms without asking again${step && step.checked ? " (step mode: every step still waits for ARM)" : ""}. Is the workspace clear?`, go);
+}
+async function setMode(mode) {
+  const r = await post("/mode", {mode});
+  say(r.ok ? `approval mode: ${mode}` : (r.reason || JSON.stringify(r)), r.ok); refresh();
+}
+async function resetArm(arm) {
+  ask(`<b>Reset the ${esc(arm)} arm's fault?</b> Only after checking it (12 V, USB, nothing in the way). It will hold where it is.`, async () => {
+    const r = await post(`/reset/${arm}`); say(r.ok ? `${arm}: reset` : `${arm}: ${r.reason}`, r.ok); refresh();
+  });
+}
+async function torqueOff(arm) {
+  ask(`<b>Torque OFF on the ${esc(arm)} arm.</b> It will fall under gravity. Is someone holding it?`, async () => {
+    const r = await post(`/torque_off/${arm}`, {confirm:true});
+    say(r.ok ? `${arm}: torque off (read back ${JSON.stringify(r.torque)})` : `${arm}: FAILED ${r.error || JSON.stringify(r)}`, r.ok);
+    refresh();
+  });
+}
+// ---------------------------------------------------------------- collapsible cards (state remembered per browser)
+const OPEN = (() => { try { return JSON.parse(localStorage.getItem("robotd.open") || "{}"); } catch { return {}; } })();
+function isOpen(id, dflt) { return id in OPEN ? OPEN[id] : dflt; }
+function toggle(id, dflt) {
+  OPEN[id] = !isOpen(id, dflt);
+  try { localStorage.setItem("robotd.open", JSON.stringify(OPEN)); } catch {}
+  render();
+}
+// a card: `force` keeps it open (a fault, an approval waiting); `right` sits at the head's right (not a toggle click)
+function card(id, title, body, {dflt = true, force = false, cls = "", right = ""} = {}) {
+  const open = force || isOpen(id, dflt);
+  return `<div class="card ${open ? "open" : ""} ${cls}">
+    <div class="head" data-act="toggle" data-id="${esc(id)}" data-dflt="${dflt ? 1 : 0}"><span class="chev">&#9654;</span><h2>${title}</h2>
+      ${right ? `<span class="hr">${right}</span>` : ""}</div>
+    <div class="body">${body}</div></div>`;
+}
+// every click on a control goes through here: ids and names come from data- attributes, never from code strings
+document.addEventListener("click", e => {
+  const el = e.target.closest("[data-act]");
+  if (!el) return;
+  const d = el.dataset;
+  if (d.act === "toggle") return toggle(d.id, d.dflt === "1");
+  if (d.act === "decide") return decide(d.pid, d.approve === "1");
+  if (d.act === "torque") { e.stopPropagation(); return torqueOff(d.arm); }
+  if (d.act === "reset") return resetArm(d.arm);
+});
+document.addEventListener("change", e => {
+  const el = e.target.closest("[data-step]");
+  if (el) STEP[el.dataset.step] = el.checked;
+});
+// ---------------------------------------------------------------- data
+let S = null, H = [], LIM = null, shownPrograms = "", pendingProgs = [];
+async function refresh() {
+  try {
+    S = await (await fetch("/state")).json();
+    if ((S.supervisor.programs || []).some(p => p.status === "pending")) {
+      const key = S.supervisor.programs.filter(p => p.status === "pending").map(p => p.program_id).join(",");
+      if (key !== shownPrograms) { pendingProgs = await (await fetch("/programs")).json(); shownPrograms = key; }
+    } else { pendingProgs = []; shownPrograms = ""; }
+  } catch (e) { S = null; }
+  render();
+}
+const OLD = {};                                     // program id -> its motions, fetched when an older one is opened
+async function refreshHistory() {
+  try { H = await (await fetch("/history")).json(); } catch (e) { return; }
+  if (S) render();                                   // at once, not at the next state poll
+  for (const p of H) if (p.motions === null && isOpen("p_" + p.program_id, false) && !(p.program_id in OLD)) {
+    OLD[p.program_id] = [];
+    fetch("/history/" + encodeURIComponent(p.program_id)).then(r => r.json())
+      .then(d => { OLD[p.program_id] = d.ok ? d.motions : []; render(); }).catch(() => {});
+  }
+}
+async function loadLimits() {
+  try { LIM = (await (await fetch("/limits")).json()).arms; } catch (e) {}
+}
+// ---------------------------------------------------------------- rendering
+const ago = t => { const s = Math.max(0, Date.now() / 1000 - t); return s < 60 ? `${s.toFixed(0)} s` : s < 3600 ? `${(s / 60).toFixed(0)} min` : `${(s / 3600).toFixed(1)} h`; };
+const dur = (a, b) => { const s = Math.max(0, (b ?? Date.now() / 1000) - a); return s < 60 ? `${s.toFixed(0)} s` : `${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, "0")} s`; };
+const clock = t => new Date(t * 1000).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"});
+function chip(id, text, cls) { const e = document.getElementById(id); e.textContent = text; e.className = "chip " + (cls || ""); }
+
+function renderHeader() {
+  if (!S) { chip("loop", "robotd unreachable", "bad"); return; }
+  const sup = S.supervisor, pend = sup.pending || [];
+  chip("motion", S.motion_enabled ? "MOTION ON" : "READ-ONLY", S.motion_enabled ? "warn" : "ok");
+  const mode = sup.mode;
+  chip("approval", mode === "none" ? "UNATTENDED: no approval" : mode === "read_only" ? "approval: -" :
+       `approval: ${mode === "first_motion" ? "each program" : "every motion"}${sup.armed ? " · ARMED" : ""}`,
+       mode === "none" ? "bad" : sup.armed ? "warn" : "ok");
+  chip("backend", (S.backend || "?").toUpperCase(), S.backend === "hardware" ? "warn" : "info");
+  const l = S.loop, good = l.measured_hz > 0.9 * l.target_hz && l.work_ms_p99 < 1000 / l.target_hz;
+  chip("loop", `${l.measured_hz} Hz · p99 ${l.work_ms_p99} ms`, good ? "ok" : "bad");
+  const faults = Object.entries(S.arms).filter(([, a]) => a.fault).map(([n]) => n);
+  const fe = document.getElementById("faults");
+  fe.style.display = faults.length ? "" : "none";
+  if (faults.length) chip("faults", `FAULT: ${faults.join(", ")}`, "bad");
+  const run = H.find(p => p.status === "running");
+  const pe = document.getElementById("prog");
+  if (run) {
+    const where = run.progress && run.progress.checkpoint ? `at checkpoint <b>${esc(run.progress.checkpoint)}</b>`
+                : run.progress && run.progress.step ? `step ${run.progress.step} (${esc(run.progress.kind || "")})` : "starting";
+    pe.innerHTML = `<b>${esc(run.title || run.program_id)}</b> · ${where} · ${dur(run.started || run.requested)} <span class="muted">${esc(run.holder)}</span>`;
+    pe.className = "";
+  } else { pe.textContent = sup.lease ? `leased by ${sup.lease.holder}` : "no program"; pe.className = "muted"; }
+  const btn = document.getElementById("armBtn");
+  btn.disabled = !S.motion_enabled || mode === "none";
+  btn.textContent = pend.length ? `ARM · ${pend.length} waiting` : "ARM";
+  btn.classList.toggle("pending", pend.length > 0);
+  const sel = document.getElementById("modeSel");
+  if (document.activeElement !== sel && ["first_motion", "every_motion"].includes(mode)) sel.value = mode;
+  sel.disabled = !S.motion_enabled || mode === "none";
+}
+
+function renderApprovals() {
+  const box = document.getElementById("approvals");
+  if (!S) { box.innerHTML = ""; return; }
+  const sup = S.supervisor, pend = sup.pending || [];
+  for (const p of pendingProgs) if (!(p.program_id in STEP)) STEP[p.program_id] = !!p.step_mode;
+  const progHtml = pendingProgs.map(p => {
+    const pv = p.preview || {};
+    const pvText = pv.skipped ? "the agent SKIPPED the twin preview: review the code"
+      : pv.twin === null || pv.twin === undefined ? "no twin preview (review the code)"
+      : pv.ok ? `twin preview ok: ${pv.steps ?? "?"} steps, ${pv.motion_s ?? "?"} s of motion`
+      : `twin preview FAILED: ${pv.reason || pv.status || ""}`;
+    return card("approve_" + p.program_id, `Program waiting for approval: ${esc(p.title)} <span class="muted">${esc(p.program_id)} · ${esc(p.holder)}</span>`,
+      `<p class="${(pv.twin && !pv.ok) || pv.skipped ? "bad" : "muted"}">${esc(pvText)}</p>
+       <pre class="code">${esc(p.code)}</pre>
+       <div class="row">
+         <label><input type="checkbox" data-step="${esc(p.program_id)}" ${STEP[p.program_id] ? "checked" : ""}> step mode (approve every step)</label>
+         <button class="arm" data-act="decide" data-pid="${esc(p.program_id)}" data-approve="1">Approve program</button>
+         <button data-act="decide" data-pid="${esc(p.program_id)}" data-approve="0">Deny</button></div>`, {force:true, cls:"alert"});
+  }).join("");
+  let html = "";
+  if (pend.length)
+    html += card("pending", `Waiting for approval <span class="tag warn">${pend.length}</span>`,
+      pend.map(m => `<div class="ev"><span class="k">${esc(m.motion_id)}</span><span class="d">${esc(m.kind)} on ${esc(m.arms.join(" + "))},
+        ${m.duration_s} s <span class="muted">expires in ${m.expires_in_s} s</span></span></div>`).join("")
+      + (sup.rearm_required.length ? `<p class="muted">re-approval required after a block: ${esc(sup.rearm_required.join(", "))}</p>` : ""),
+      {force:true, cls:"alert"});
+  // the program cards are rewritten only when they change (the code's scroll and the checkbox stay as they are);
+  // the pending-motions card counts down, so it has its own slot
+  if (box.dataset.progs !== progHtml) {
+    box.innerHTML = `<div id="ap_progs">${progHtml}</div><div id="ap_pend"></div>`; box.dataset.progs = progHtml;
+  }
+  document.getElementById("ap_pend").innerHTML = html;
+}
+
+// one motion's record as a timeline line, with what matters highlighted
+function evLine(m) {
+  const tags = [];
+  const r = m.report || {};
+  if (r.grasped) tags.push(`<span class="tag ok">grasp ${r.grasped.gripper}% · ${r.grasped.current_ma} mA</span>`);
+  if (r.not_settled) for (const [arm, v] of Object.entries(r.not_settled))
+    tags.push(`<span class="tag warn">${esc(arm)} ${esc(JSHORT[v.joint] || v.joint)} ${v.error_deg}° short</span>`);
+  if ("condition_met" in r) tags.push(r.condition_met ? `<span class="tag ok">until: ${esc(JSON.stringify(r.condition_met))}</span>`
+                                                      : `<span class="tag">until: not met</span>`);
+  if (r.contact || r.blocked || r.contact_recorded) tags.push(`<span class="tag bad">contact</span>`);
+  const st = m.status;
+  const cls = ["done", "condition_met"].includes(st) ? "ok" : ["rejected", "faulted", "blocked"].includes(st) ? "bad" : "warn";
+  return `<div class="ev"><span class="k">${clock(m.ended)} ${esc(m.motion_id || "")}</span><span class="d">
+    ${esc(m.kind)} <span class="muted">${esc((m.arms || []).join("+"))}${m.duration_s ? " · " + m.duration_s + " s" : ""}</span>
+    <span class="tag ${cls}">${esc(st)}</span>${tags.join("")}
+    ${m.reason && st !== "done" ? `<div class="${cls}">${esc(m.reason)}</div>` : ""}</span></div>`;
+}
+function progBlock(p, isCurrent) {
+  const id = "p_" + p.program_id;
+  const open = isOpen(id, isCurrent);
+  const st = p.status, out = p.reason || "";
+  const cls = st === "running" ? "warn" : st !== "ended" ? (st === "denied" ? "bad" : "") :
+              out.startsWith("done") ? "ok" : "bad";
+  const icon = st === "running" ? "&#9654;" : cls === "ok" ? "&#10003;" : cls === "bad" ? "&#10007;" : "&#8226;";
+  const ms = p.motions || OLD[p.program_id] || [];
+  const stops = ms.filter(m => m.status === "stopped").length;
+  const rej = ms.filter(m => m.status === "rejected").length;
+  const motions = p.motions !== null ? p.motions : (OLD[p.program_id] || []);
+  return `<div class="prog ${open ? "open" : ""}">
+    <div class="ph" data-act="toggle" data-id="${esc(id)}" data-dflt="${isCurrent ? 1 : 0}"><b class="${cls}">${icon}</b>
+      <span class="t"><b>${esc(p.title || p.program_id)}</b> <span class="muted">${clock(p.started || p.requested)}${p.started ? " · " + dur(p.started, p.ended) : ""} · ${p.n_motions} motions</span></span>
+      ${rej ? `<span class="tag bad">${rej} refused</span>` : ""}${stops ? `<span class="tag warn">stopped</span>` : ""}</div>
+    <div class="pb">${motions.map(evLine).join("") || `<span class="muted">${p.n_motions ? "loading…" : "no motions yet"}</span>`}
+      ${st === "ended" ? `<div class="outcome ${cls}"><b>${esc(out.split(":")[0])}</b>${out.includes(":") ? ":" + esc(out.slice(out.indexOf(":") + 1)) : ""}</div>` : ""}
+      ${st === "denied" ? `<div class="outcome bad">denied</div>` : ""}</div></div>`;
+}
+function renderPrograms() {
+  const run = H.find(p => p.status === "running");
+  const cur = document.getElementById("current");
+  if (run) {
+    const pr = run.progress || {};
+    const where = pr.checkpoint ? `<span class="tag warn">waiting at checkpoint '${esc(pr.checkpoint)}'</span> the agent is looking`
+                : pr.step ? `step ${pr.step}: ${esc(pr.kind || "")}` : "starting";
+    cur.innerHTML = card("current", `Running: ${esc(run.title || run.program_id)} <span class="muted" style="white-space:nowrap">${esc(run.holder)} · ${dur(run.started || run.requested)}</span>`,
+      `<p>${where}</p>${run.motions.slice(-6).map(evLine).join("") || '<span class="muted">no motions yet</span>'}`,
+      {dflt:true, cls: pr.checkpoint ? "alert" : ""});
+  } else cur.innerHTML = "";
+  const past = H.filter(p => p.status !== "pending" && p.status !== "approved");
+  document.getElementById("timeline").innerHTML = card("timeline",
+    `Timeline <span class="muted">${past.length} program${past.length === 1 ? "" : "s"} · newest first</span>`,
+    past.map(p => progBlock(p, p.status === "running")).join("") || '<span class="muted">no programs yet this session</span>');
+}
+
+function torqueSwitch(name, a) {
+  const on = a.torque ? a.torque.some(x => x) : null;
+  const label = on === null ? "torque ?" : "torque";
+  return `<span class="switch ${on ? "on" : ""}" data-act="torque" data-arm="${esc(name)}"
+    title="turn torque off (asks first). Torque comes on only with a motion, never from this page">${label} <span class="knob"></span></span>`;
+}
+function armCard(name, a) {
+  const color = name === "left" ? "var(--left)" : "var(--right)";
+  const status = a.fault ? `<span class="chip bad">fault</span>`
+               : a.connected ? `<span class="chip ok">connected</span>` : `<span class="chip warn">not connected</span>`;
+  let grip = "";
+  if (a.joints) {
+    const g = a.joints.gripper, ma = a.current_ma.gripper;
+    grip = ma > 300 && g < 40 ? `<span class="tag ok" title="gripper">gripping ${g.toFixed(0)}% · ${ma.toFixed(0)} mA</span>`
+         : `<span class="tag" title="gripper">${g < 12 ? "closed" : "open"} ${g.toFixed(0)}%</span>`;
+  }
+  let rows = `<span class="h">joint</span><span class="h">in range</span><span class="h num">deg/%</span><span class="h num">load · mA</span>`;
+  if (a.joints) for (const j of J) {
+    const v = a.joints[j], lim = LIM && LIM[name] && LIM[name].hard ? LIM[name].hard[j] : (j === "gripper" ? [0, 100] : null);
+    const pos = lim ? Math.min(100, Math.max(0, (v - lim[0]) / (lim[1] - lim[0]) * 100)) : 50;
+    const zero = lim && lim[0] < 0 && lim[1] > 0 ? (-lim[0]) / (lim[1] - lim[0]) * 100 : null;
+    const hot = Math.abs(a.load_pct[j]) > 60 || a.current_ma[j] > 900;
+    rows += `<span>${JSHORT[j]}</span><span class="bar">${zero !== null ? `<span class="z" style="left:${zero}%"></span>` : ""}<i style="left:calc(${pos}% - 1px)"></i></span>
+      <span class="num">${v.toFixed(1)}</span><span class="num ${hot ? "warn" : "muted"}">${Math.abs(a.load_pct[j]).toFixed(0)}% · ${a.current_ma[j].toFixed(0)}</span>`;
+  }
+  const tip = a.tip_xyz_m ? `tip (${a.tip_xyz_m.map(v => v.toFixed(3)).join(", ")}) m · pitch ${a.pitch_deg}° · read ${a.read_ms} ms` : "no reading yet";
+  const body = `${a.fault ? `<p class="bad"><b>${esc(a.fault)}</b></p><button data-act="reset" data-arm="${esc(name)}">Reset fault…</button>` : ""}
+    <div class="joints">${rows}</div>
+    <p class="muted" style="margin:8px 0 0">${tip}</p>
+    ${a.motion ? `<p style="margin:6px 0 0">motion <b>${esc(a.motion.motion_id)}</b> ${esc(a.motion.kind)}: <b>${esc(a.motion.status)}</b></p>` : ""}
+    ${(a.pose_warnings || []).map(w => `<p class="warn" style="margin:6px 0 0">as it sits: ${esc(w)} - its first motion must move away from it</p>`).join("")}`;
+  return card("arm_" + name, `<span class="swatch" style="background:${color}"></span>${esc(name)} ${status} ${grip}`, body,
+              {dflt:true, force:!!a.fault, cls:a.fault ? "fault" : "", right:torqueSwitch(name, a)});
+}
+function renderArms() {
+  document.getElementById("arms").innerHTML = S ? Object.entries(S.arms).map(([n, a]) => armCard(n, a)).join("") : "";
+}
+function renderSystem() {
+  if (!S) { document.getElementById("system").innerHTML = ""; return; }
+  const l = S.loop, warns = S.warnings || [];
+  const camErr = Object.values(S.cameras).some(c => c.error);
+  const other = (S.supervisor.recent || []).filter(m => !m.program);   // robotd marks a program's motions
+  const otherHtml = other.length ? `<div class="muted" style="margin-top:8px">motions outside programs</div>` + other.map(m =>
+    `<div class="ev"><span class="k">${esc(m.motion_id)}</span><span class="d">${esc(m.kind)} <span class="muted">${esc(m.arms.join("+"))}</span>
+     <span class="tag ${["done", "condition_met"].includes(m.status) ? "ok" : "bad"}">${esc(m.status)}</span>
+     <span class="muted">${m.ended_s_ago} s ago</span>${m.reason && m.status !== "done" ? `<div>${esc(m.reason)}</div>` : ""}</span></div>`).join("") : "";
+  document.getElementById("system").innerHTML = card("system",
+    `System ${warns.length ? `<span class="tag warn">${warns.length} warning${warns.length > 1 ? "s" : ""}</span>` : ""}${camErr ? '<span class="tag bad">camera</span>' : ""}`,
+    `${warns.map(w => `<p class="warn">${esc(w)}</p>`).join("")}
+     <div class="muted">loop ${l.measured_hz}/${l.target_hz} Hz · work ${l.work_ms_median} ms (p99 ${l.work_ms_p99}) · overruns ${l.overruns}</div>
+     ${Object.entries(S.cameras).map(([n, c]) => `<div class="muted">${esc(n)}: ${c.fps} fps ${c.error ? `<span class="bad">${esc(c.error)}</span>` : ""}</div>`).join("")}
+     ${otherHtml}`,
+    {dflt:warns.length > 0, cls:warns.length ? "alert" : ""});
+}
+function render() { renderHeader(); renderApprovals(); renderPrograms(); renderArms(); renderSystem(); }
+loadLimits(); refreshHistory(); refresh();
+setInterval(refresh, 500); setInterval(refreshHistory, 1000); setInterval(loadLimits, 30000);
+</script>
+</body>
+</html>

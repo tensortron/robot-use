@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rig calibration</title>
+<style>
+  :root { --bg:#f3f4f7; --card:#fff; --card2:#f0f1f5; --fg:#1d2230; --dim:#667085; --line:#d9dce4;
+          --ok:#1f9d55; --warn:#c98a00; --bad:#d64545; --info:#2f6fde; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14161c; --card:#1d2029; --card2:#262a35; --fg:#e6e8ee;
+          --dim:#98a0b3; --line:#343947; --ok:#3ccf7a; --warn:#e5b030; --bad:#ff6b6b; --info:#6aa1ff; } }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+         display:flex; flex-direction:column; overflow:hidden; }
+  header { display:flex; gap:10px; align-items:center; padding:10px 14px; background:var(--card);
+           border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:15px; margin:0 6px 0 0; }
+  .chip { padding:3px 10px; border-radius:999px; font-weight:600; font-size:12px; border:1px solid var(--line);
+          white-space:nowrap; }
+  .chip.ok { color:var(--ok); } .chip.warn { color:var(--warn); } .chip.bad { color:#fff; background:var(--bad);
+          border-color:var(--bad); } .chip.info { color:var(--info); } .chip.dim { color:var(--dim); }
+  main { flex:1; display:grid; grid-template-columns:minmax(0,1fr) 420px; gap:12px; padding:12px; min-height:0; }
+  .view { background:#000; border-radius:8px; overflow:hidden; display:flex; min-height:0; }
+  .view img { width:100%; height:100%; object-fit:contain; }
+  .panel { overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding-right:4px; min-height:0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; }
+  .card.active { border-color:var(--info); }
+  .card .head { display:flex; gap:8px; align-items:center; padding:9px 12px; cursor:pointer; user-select:none; }
+  .card .head h2 { font-size:14px; margin:0; flex:1; }
+  .card .num { color:var(--dim); font-weight:700; width:18px; }
+  .card .body { padding:0 12px 12px; display:none; }
+  .card.open .body { display:block; }
+  .muted { color:var(--dim); font-size:12px; }
+  p { margin:6px 0; }
+  .banner { margin:10px 12px 0; padding:8px 12px; border-radius:8px; font-weight:600; }
+  .banner.bad { background:color-mix(in srgb, var(--bad) 15%, var(--card)); color:var(--bad); border:1px solid var(--bad); }
+  .banner.warn { background:color-mix(in srgb, var(--warn) 15%, var(--card)); color:var(--warn); border:1px solid var(--warn); }
+  button { font:inherit; font-weight:600; padding:6px 12px; border-radius:7px; border:1px solid var(--line);
+           background:var(--card2); color:var(--fg); cursor:pointer; }
+  button.primary { background:var(--info); color:#fff; border-color:var(--info); }
+  button.danger { background:var(--bad); color:#fff; border-color:var(--bad); }
+  button:disabled { opacity:.45; cursor:default; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  form.grid { display:grid; grid-template-columns:1fr 92px; gap:6px 8px; align-items:center; font-size:13px; }
+  form.grid input { width:100%; padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--card2);
+                    color:var(--fg); font:inherit; text-align:right; font-variant-numeric:tabular-nums; }
+  form.grid label .u { color:var(--dim); }
+  table { border-collapse:collapse; width:100%; font-size:12px; font-variant-numeric:tabular-nums; }
+  td, th { padding:2px 4px; text-align:right; } td:first-child, th:first-child { text-align:left; }
+  th { color:var(--dim); font-weight:500; }
+  .short { color:var(--warn); font-weight:600; }
+  .bar { height:6px; background:var(--card2); border-radius:3px; position:relative; min-width:80px; }
+  .bar i { position:absolute; top:0; bottom:0; background:var(--info); border-radius:3px; }
+  .log { font-size:12px; max-height:160px; overflow:auto; }
+  .log div { padding:1px 0; } .log .bad { color:var(--bad); }
+  img.check { width:100%; border-radius:6px; margin-top:6px; }
+  @media (max-width: 900px) { body { overflow:auto; display:block; } main { grid-template-columns:1fr; }
+    .view img { height:auto; } .panel { overflow:visible; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Rig calibration</h1>
+  <span id="chips"></span>
+</header>
+<div id="banners"></div>
+<main>
+  <div class="view"><img id="view" src="/stream" alt="the camera, with what the current step draws on it"></div>
+  <div class="panel" id="panel"></div>
+</main>
+<script>
+"use strict";
+let DIRTY = false;     // a form has unsaved input: the 1 s refresh must not redraw it away
+let S = null, V = null, OPEN = location.hash.slice(1) || null, BUSY = false;   // #estimate opens that step
+const ARROWS = [[90, "to the robot's left"], [270, "to the robot's right"], [0, "straight forward"], [180, "back toward the arms"]];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const chip = (txt, cls) => `<span class="chip ${cls}">${esc(txt)}</span>`;
+const STATUS = {restore: ["restore needed", "bad"], done: ["done", "ok"], todo: ["to do", "warn"], check: ["check", "warn"], estimated: ["estimated", "info"], info: ["", "dim"]};
+
+async function act(body) {
+  const preview = body.do === "estimate_preview";             // previews never block a click, nor wait for one
+  if (BUSY && !preview) return;
+  if (!preview) BUSY = true;
+  try {
+    const r = await (await fetch("/action", {method: "POST", headers: {"Content-Type": "application/json"},
+                                               body: JSON.stringify(body)})).json();
+    if (!r.ok) alert(r.error);
+    await refresh(true);
+    return r;
+  } finally { if (!preview) BUSY = false; }
+}
+function formValues(id) {
+  const out = {};
+  for (const el of document.querySelectorAll(`#${id} input`)) out[el.name] = el.type === "checkbox" ? el.checked : el.value;
+  return out;
+}
+
+function armBody(st) {
+  const a = st.arm, name = st.id.slice(4);
+  if (a && a.touched && a.phase !== "ranging" && a.phase !== "limp") {
+    return `<p class="short">${esc(a.message)}</p>
+      <p>The servos may hold a half-finished calibration. Check the 12 V and the USB, then put back what they held before.</p>
+      ${a.message.includes("fix or delete") ? "" : `<div class="row"><button class="primary" data-act="arm_cancel" data-arm="${esc(name)}">Restore the previous calibration</button></div>`}`;
+  }
+  if (!a || ["idle", "done", "cancelled", "error"].includes(a.phase)) {
+    const ex = (st.existing || []).map(e => `<tr><td>${esc(e.id)}</td><td class="muted">${esc(e.date)}</td>
+      <td><button data-act="arm_use" data-arm="${esc(name)}" data-path="${esc(e.path)}" title="${esc(e.where)}">Use</button></td></tr>`).join("");
+    return `<p>lerobot's calibration of the ${esc(name)} follower: its zero and the range of each joint.
+      robot.yaml names it <b>${esc(st.calibration_id)}</b>.</p>
+      ${ex ? `<p><b>Calibrated before with lerobot?</b> Use that file instead (nothing is written to the servos):</p>
+        <table>${ex}</table>` : ""}
+      <p>${ex ? "Or calibrate now. " : ""}<b>Hold the arm first:</b> its torque goes off and it falls under gravity.</p>
+      ${a && a.message ? `<p class="muted">${esc(a.message)}</p>` : ""}
+      <div class="row"><button class="primary" data-act="arm_limp" data-arm="${esc(name)}">Torque off</button></div>`;
+  }
+  if (a.phase === "limp") {
+    return `<p><b>1.</b> Move the arm to the <b>middle of its range</b>: each joint about halfway between its
+      two ends, the gripper half open. Hold it there.</p>
+      <div class="row"><button class="primary" data-act="arm_middle" data-arm="${esc(name)}">It is in the middle</button>
+      <button data-act="arm_cancel" data-arm="${esc(name)}">Cancel</button></div>`;
+  }
+  const rows = Object.keys(a.mins).map(j => {
+    const lo = a.mins[j], hi = a.maxes[j], now = a.positions[j];
+    const short = a.short.includes(j);
+    return `<tr><td class="${short ? "short" : ""}">${esc(j)}</td><td>${lo}</td><td>${now ?? ""}</td><td>${hi}</td>
+      <td><div class="bar"><i style="left:${lo / 40.95}%;width:${(hi - lo) / 40.95}%"></i></div></td></tr>`;
+  }).join("");
+  return `<p><b>2.</b> Move <b>every joint except the wrist roll</b> slowly through its <b>whole range</b>, end to end,
+    and the gripper fully open and closed. The table grows as you go.</p>
+    <table><tr><th>joint</th><th>min</th><th>now</th><th>max</th><th>range</th></tr>${rows}</table>
+    ${a.short.length ? `<p class="short">Not yet through their range: ${a.short.map(esc).join(", ")}</p>` : ""}
+    <div class="row"><button class="primary" data-act="arm_finish" data-arm="${esc(name)}" ${a.short.length ? "disabled" : ""}>Finish</button>
+    <button data-act="arm_cancel" data-arm="${esc(name)}">Cancel</button></div>`;
+}
+
+function fields(list, vals) {
+  return list.map(([k, label, u]) => `<label for="f_${k}">${esc(label)} <span class="u">${esc(u)}</span></label>
+    <input id="f_${k}" name="${esc(k)}" type="number" step="any" value="${vals[k] ?? ""}">`).join("");
+}
+function measurementsBody() {
+  return `<p>Tape measurements of this rig, in metres. The values shown are robot.yaml's now: check each one against
+    the rig and correct it. (x is forward from the line through both arms' pan axes; y is to the robot's left.)</p>
+    <form class="grid" id="meas">${fields(S.fields.measurements, V.measurements)}
+      <label for="f_newrig">A new rig: reset each arm's joint offsets and base height to 0 <span class="u">(now: ${
+        Object.entries(V.offsets || {}).map(([n, o]) => `${esc(n)} ${esc(JSON.stringify(o.joint_offsets_deg))}`).join(", ")})</span></label>
+      <input id="f_newrig" name="new_rig" type="checkbox"></form>
+    <p class="muted">robot.yaml starts with the offsets measured on the rig it came from. On other arms, reset them,
+      then measure your own on the overlay (the Check step).</p>
+    <div class="row"><button class="primary" data-act="measurements">Save into robot.yaml</button></div>`;
+}
+function estimateBody() {
+  const lens = V.lens_numbers ? `<label for="f_lens">Use the lens numbers already in robot.yaml</label>
+    <input id="f_lens" name="use_lens_numbers" type="checkbox" checked>` : "";
+  return `<p>A first guess at the camera, good enough to start: measure its position with a tape (the centre of the
+    lens), estimate its tilt, and take the field of view from the camera's datasheet. The board, the stand and the
+    pan axes (orange crosses) are drawn on the view from these numbers: adjust until they lie on the real ones.</p>
+    <p class="muted">Without the lens step, positions read from the camera are off by a few cm on a wide lens.</p>
+    <form class="grid" id="est">${fields(S.fields.estimate, V.estimate)}${lens}</form>
+    <div class="row"><button class="primary" data-act="estimate_save">Save into robot.yaml</button>
+    <button data-act="view">Show robot.yaml's camera</button></div>`;
+}
+function lensBody(st) {
+  const c = st.capture;
+  return `<p>Measures the lens with the printed checkerboard (9 x 6 inner corners, 25 mm squares). Set the focus first and
+    don't touch it afterwards.</p>
+    <p>Hold the board where the view asks: <b>NEXT: cell (c, r)</b> is a ninth of the image (0,0 is top left), at a
+    tilt (flat, mid, steep). Hold it still: the frame is taken by itself, with a green flash. 27 frames make a
+    complete set.</p>
+    ${c ? `<p><b>${c.kept} / ${c.want}</b> frames. <span class="muted">${esc(c.guide)}</span></p>` : ""}
+    <div class="row"><button class="primary" data-act="lens_start">${c ? "Start again" : "Start capture"}</button>
+    <button data-act="lens_solve" ${c && c.kept >= 8 ? "" : "disabled"}>Solve${c && c.kept < 27 ? " (27 is better)" : ""}</button></div>`;
+}
+function poseBody(st) {
+  const p = st.pass1;
+  const form = p ? `<img class="check" src="/pose_check.jpg?t=${Date.now()}" alt="the photo, with the corner to measure circled">
+    <p>Measure the <b>circled corner</b> from the rig's origin (on the table, midway between the pan axes), and read which way
+    the <b>arrow</b> points on the table.</p>
+    <form class="grid" id="pose">
+      <label for="f_cx">Corner x <span class="u">m, + forward</span></label><input id="f_cx" name="corner_x" type="number" step="any">
+      <label for="f_cy">Corner y <span class="u">m, + robot's left</span></label><input id="f_cy" name="corner_y" type="number" step="any">
+    </form>
+    <div class="row">${ARROWS.map(([d, t]) => `<button data-act="pose_solve" data-yaw="${d}">Arrow ${esc(t)}</button>`).join("")}</div>` : "";
+  return `<p>Where the camera is, measured: lay the board <b>flat on the table in front of the arms</b>, pattern up,
+    square to the arms, all of it in view, weighed down so it lies flat.</p>
+    <div class="row"><button class="primary" data-act="pose_start">Show the board view</button>
+    <button data-act="pose_capture">Take the photo</button></div>${form}`;
+}
+function checkBody() {
+  return `<p>Start the rig read-only, then open its operator page:</p>
+    <p><code>.venv/bin/python tools/run_rig.py</code></p>
+    <p>On the ego view the drawn arms must lie on the real ones and the yellow outline on the board. If an arm sits
+    off, its joint offsets in robot.yaml need measuring (docs/CALIBRATION.md). Stop this page first: robotd needs the
+    arms and the camera.</p>`;
+}
+
+function render() {
+  if (!S) return;
+  const pf = S.preflight || [], pfc = S.preflight_camera || [];
+  document.getElementById("chips").innerHTML =
+    (S.trial ? chip("TRIAL: writes into " + S.trial, "warn") : chip("writes " + S.rig, "info")) +
+    (S.demo ? chip("DEMO", "info") : "") +
+    (S.camera_only ? chip("camera only: the arms are not used", "info") : "") +
+    (!pf.length ? chip("devices ok", "ok") : !pfc.length ? chip("arms off: the camera steps work", "warn") : chip("blocked", "bad"));
+  document.getElementById("banners").innerHTML =
+    pf.map(p => `<div class="banner bad">${esc(p)}</div>`).join("") +
+    (S.camera_error ? `<div class="banner warn">${esc(S.camera_error)}</div>` : "");
+  if (OPEN === null) OPEN = (S.steps.find(s => s.status === "restore") ||
+                             S.steps.find(s => ["todo", "check"].includes(s.status)) || S.steps[0]).id;
+  const bodies = {measurements: measurementsBody, estimate: estimateBody, lens: lensBody, pose: poseBody, check: checkBody};
+  const editing = DIRTY || (document.activeElement && document.activeElement.tagName === "INPUT");
+  const panel = document.getElementById("panel");
+  if (editing) return;                                          // never re-render under the user's typing
+  panel.innerHTML = S.steps.map((st, i) => {
+    const [txt, cls] = STATUS[st.status] || [st.status, "dim"];
+    const open = OPEN === st.id;
+    const body = !open ? "" : st.id.startsWith("arm_") ? armBody(st) : (V ? bodies[st.id](st) : "");
+    return `<div class="card ${open ? "open active" : ""}"><div class="head" data-act="open" data-id="${esc(st.id)}">
+      <span class="num">${i + 1}</span><h2>${esc(st.title)}</h2>${txt ? chip(txt, cls) : ""}</div>
+      <div class="body"><p class="muted">${esc(st.detail)}</p>${body}</div></div>`;
+  }).join("") + `<div class="card open"><div class="head"><h2>Log</h2></div><div class="body log">${
+    S.messages.slice().reverse().map(m => `<div class="${m.ok ? "" : "bad"}">${esc(m.t)} ${esc(m.text)}</div>`).join("")}</div></div>`;
+}
+
+document.addEventListener("click", async e => {
+  const el = e.target.closest("[data-act]");
+  if (!el || el.disabled) return;
+  const d = el.dataset;
+  if (d.act === "open") { OPEN = OPEN === d.id ? "" : d.id; DIRTY = false; document.activeElement.blur(); render(); return; }
+  if (d.act === "arm_limp" && !confirm(`Torque OFF on the ${d.arm} arm: it will fall under gravity. Are you holding it?`)) return;
+  if (["arm_limp", "arm_middle", "arm_finish", "arm_cancel"].includes(d.act)) return act({do: d.act, arm: d.arm});
+  if (d.act === "arm_use") return act({do: "arm_use", arm: d.arm, path: d.path});
+  if (d.act === "measurements") { const r = await act({do: "measurements", values: formValues("meas")}); if (r && r.ok) { V = null; DIRTY = false; refresh(); } return; }
+  if (d.act === "estimate_save") {
+    const st = id => (S.steps.find(s => s.id === id) || {}).status;
+    const keepLens = formValues("est").use_lens_numbers;
+    const lost = [st("pose") === "done" ? "the measured pose" : "", st("lens") === "done" && !keepLens ? "the calibrated lens" : ""].filter(Boolean);
+    if (lost.length && !confirm(`Saving this estimate replaces ${lost.join(" and ")} with these numbers. Go on?`)) return;
+  }
+  if (d.act === "estimate_save") { const r = await act({do: "estimate_save", values: formValues("est")}); if (r && r.ok) { V = null; DIRTY = false; refresh(); } return; }
+  if (d.act === "pose_solve") return act({do: "pose_solve", yaw: +d.yaw, ...formValues("pose")});
+  return act({do: d.act});
+});
+let previewTimer = null;
+document.addEventListener("change", e => { if (e.target.closest("form")) DIRTY = true; });
+document.addEventListener("input", e => {
+  if (e.target.closest("form")) DIRTY = true;
+  if (!e.target.closest("#est")) return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    const v = formValues("est");
+    if (["eye_x", "eye_y", "eye_z", "tilt_down_deg", "fov_h_deg"].every(k => v[k] !== "")) act({do: "estimate_preview", values: v});
+  }, 300);
+});
+
+async function refresh(force) {
+  try {
+    const st = await (await fetch("/status")).json();
+    if (st.error) { document.getElementById("banners").innerHTML = `<div class="banner bad">${esc(st.error)}</div>`; return; }
+    S = st;
+    if (!V) V = await (await fetch("/values")).json();
+    render();
+  } catch (e) { /* the tool stopped: keep the last view */ }
+}
+setInterval(refresh, 1000);
+refresh();
+</script>
+</body>
+</html>

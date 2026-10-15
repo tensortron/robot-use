@@ -1,0 +1,22 @@
+# Durable device names for the three cameras. Copy this file to udev/99-so101-cameras.rules, fill in each camera's
+# USB port path, and install it (docs/HARDWARE_SETUP.md).
+#
+# /dev/videoN numbers move between boots and replugs, so never use them. If your cameras report distinct serials,
+# you may key on ATTRS{serial} like the arms. Many cheap UVC cameras all report the same serial, so this template
+# keys on the USB port path (KERNELS) instead: then each camera must stay in its USB port. Label the cables.
+#
+# Find each path:
+#   .venv/bin/python tools/identify_cameras.py
+# and move one arm's wrist (or cover the ego lens): the camera whose picture changes is that one. The tool prints
+# each camera's KERNELS value, e.g. 1-4.1.3:1.0 (bus 1, root port 4, hub port 1, hub port 3; interface 1.0).
+#
+# ATTR{index}=="0" picks the capture node; index 1 is the UVC metadata node.
+#
+# Install:
+#   sudo cp udev/99-so101-cameras.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   ls -l /dev/cam_*
+
+SUBSYSTEM=="video4linux", KERNELS=="<KERNELS_EGO>", ATTR{index}=="0", SYMLINK+="cam_ego", MODE="0660", GROUP="video"
+SUBSYSTEM=="video4linux", KERNELS=="<KERNELS_WRIST_LEFT>", ATTR{index}=="0", SYMLINK+="cam_wrist_left", MODE="0660", GROUP="video"
+SUBSYSTEM=="video4linux", KERNELS=="<KERNELS_WRIST_RIGHT>", ATTR{index}=="0", SYMLINK+="cam_wrist_right", MODE="0660", GROUP="video"

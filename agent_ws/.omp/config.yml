@@ -1,0 +1,22 @@
+# omp project settings for the operating agent. The main policy is the pi-permission-system
+# config in ../.pi/extensions/pi-permission-system/config.json; this is a second layer that
+# does not depend on that extension: no shell, no code execution, no web, no memories.
+tools:
+  approval:
+    bash: deny
+    eval: deny
+    browser: deny
+    web_search: deny
+    task: deny
+fetch:
+  enabled: false      # read would otherwise fetch URLs
+bash:
+  enabled: false
+browser:
+  enabled: false
+github:
+  enabled: false
+memories:
+  enabled: false
+autolearn:
+  enabled: false
