@@ -5,6 +5,11 @@ or Codex) attempts it by writing short Python programs against the robot's camer
 a **skill**, and the agent applies that skill every time the task comes up again. Every motion passes through a
 safety daemon before a servo moves.
 
+> **Early development.** robot-use works end to end today, on a bimanual SO-101 and in its simulated rig, but it is
+> young: expect rough edges, and changes to the library and the stack from one version to the next. Many improvements
+> and enhancements are coming soon. The goal is to make robot-use the fastest path to every robotics deployment:
+> from a robot on the bench to one doing useful work.
+
 ![Two SO-101 arms pass a block between them and drop it into a cup, driven by an agent's program](assets/readme/pick-and-place.gif)
 
 *An agent's program on the real rig: the right arm sets the block down at a hand-off spot, and the left arm picks it up there and drops it
@@ -196,3 +201,24 @@ What the stack records (robotd's log, every program with its trace and keyframes
 | [docs/camera-calibration.md](docs/camera-calibration.md) | How this rig's lenses were measured: field of view and distortion |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Failure modes seen in practice and their fixes |
 | [docs/environment.md](docs/environment.md) | A Jetson Orin environment: JetPack, CUDA, torch pins |
+
+## Contributing
+
+robot-use is early, and the best way to shape it is to use it and tell us what happened. Issues and pull requests
+are welcome at [github.com/tensortron/robot-use](https://github.com/tensortron/robot-use).
+
+- **Report an issue.** Say what you ran (the command, the sim or your robot, the agent), what you expected and what
+  happened. Attach what the stack recorded for the run: robotd's log and the program's trace and keyframes, from
+  `~/.tensortron/robot-use/`. The output of `uv run python tools/doctor.py` helps with set-up problems.
+- **Request an enhancement.** Open an issue that describes the task or the robot you have in mind and what got in
+  the way: a skill the agent could not learn, a body the stack does not support yet, a step that took too long.
+- **Send a pull request.** Open an issue first for anything large, so we can agree on the approach. Keep the suite
+  green (`uv run python -m pytest stack/tests -q`) and add a test for what you change. Read [AGENTS.md](AGENTS.md)
+  for the conventions: geometry lives only in `robot.yaml`, and safety checks refuse a motion, never silently clip
+  it. Changes to robotd, the safety checks, the program sandbox or the agent's permissions get the closest review.
+  A starter skill (`skills/`) is code that agents run on real arms: show it working in the sim's start layout.
+- **Safety and security.** If you find a way for a program to move an arm past robotd's checks, or to get out of the
+  sandbox, report it privately (GitHub's "Report a vulnerability", under the repository's Security tab) rather than in
+  a public issue.
+
+Contributions are accepted under the project's license, [Apache-2.0](LICENSE).
